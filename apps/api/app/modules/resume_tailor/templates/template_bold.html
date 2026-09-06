@@ -54,11 +54,14 @@
 
 <div class="content">
 
+{% macro render_summary() %}
 {% if summary %}
 <div class="section-title">Profile</div>
 <p style="font-size: 9pt; line-height: 1.55; margin-bottom: 4px;">{{ summary }}</p>
 {% endif %}
+{% endmacro %}
 
+{% macro render_featured_project() %}
 {% if featured_project %}
 <div class="section-title">Featured Project</div>
 <div class="mb2">
@@ -71,7 +74,9 @@
   {% if featured_project.results %}<p style="font-size:8.5pt;font-weight:bold;margin-top:3px;">{{ featured_project.results }}</p>{% endif %}
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_experience() %}
 {% if experience %}
 <div class="section-title">Experience</div>
 {% for exp in experience %}
@@ -85,7 +90,9 @@
 </div>
 {% endfor %}
 {% endif %}
+{% endmacro %}
 
+{% macro render_skills() %}
 {% if skills %}
 <div class="section-title">Skills</div>
 <table class="skills-table">
@@ -97,7 +104,9 @@
 {% endfor %}
 </table>
 {% endif %}
+{% endmacro %}
 
+{% macro render_education() %}
 {% if education %}
 <div class="section-title">Education</div>
 {% for edu in education %}
@@ -111,7 +120,9 @@
 </div>
 {% endfor %}
 {% endif %}
+{% endmacro %}
 
+{% macro render_projects() %}
 {% if projects %}
 <div class="section-title">Projects</div>
 {% for proj in projects %}
@@ -122,7 +133,9 @@
 </div>
 {% endfor %}
 {% endif %}
+{% endmacro %}
 
+{% macro render_publications() %}
 {% if publications %}
 <div class="section-title">Publications</div>
 {% for pub in publications %}
@@ -132,12 +145,29 @@
 </div>
 {% endfor %}
 {% endif %}
+{% endmacro %}
 
+{% macro render_other_sections() %}
+{% if other_sections %}
+{% for section in other_sections %}
+<div class="section-title">{{ section.heading }}</div>
+<ul>{% for b in section.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_languages() %}
 {% if languages or relocation %}
 <div class="section-title">Additional</div>
 {% if languages %}<p style="font-size: 9pt; margin-bottom: 3px;"><strong>Languages:</strong> {{ languages | join(' · ') }}</p>{% endif %}
 {% if relocation %}<p style="font-size: 9pt;"><strong>Relocation:</strong> {{ relocation }}</p>{% endif %}
 {% endif %}
+{% endmacro %}
+
+{% set default_order = ['summary', 'featured_project', 'experience', 'skills', 'education', 'projects', 'publications', 'other_sections', 'languages'] %}
+{% set order = section_order if section_order else default_order %}
+{% set macros = {'summary': render_summary, 'featured_project': render_featured_project, 'experience': render_experience, 'education': render_education, 'skills': render_skills, 'projects': render_projects, 'publications': render_publications, 'languages': render_languages, 'other_sections': render_other_sections} %}
+{% for key in order %}{{ macros[key]() }}{% endfor %}
 
 </div>
 </body>

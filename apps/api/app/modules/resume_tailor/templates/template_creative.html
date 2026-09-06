@@ -6,6 +6,9 @@
   @page { margin: 14mm 18mm; size: A4; }
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 9.5pt; color: #222; line-height: 1.5; margin: 0; }
+  @media screen {
+    body { padding: 14mm 18mm; background: #ffffff; }
+  }
 
   .header { border-left: 5px solid #e05a2b; padding-left: 14px; margin-bottom: 14px; }
   h1 { font-size: 21pt; font-weight: bold; color: #1a1a1a; margin: 0 0 2px; }
@@ -54,6 +57,7 @@
   </div>
 </div>
 
+{% macro render_summary() %}
 {% if summary %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -63,7 +67,9 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_featured_project() %}
 {% if featured_project %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -81,7 +87,9 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_experience() %}
 {% if experience %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -99,7 +107,9 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_skills() %}
 {% if skills %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -114,7 +124,9 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_education() %}
 {% if education %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -132,7 +144,9 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_projects() %}
 {% if projects %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -148,7 +162,9 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_publications() %}
 {% if publications %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -163,7 +179,23 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
 
+{% macro render_other_sections() %}
+{% if other_sections %}
+{% for section in other_sections %}
+<div class="section-wrap">
+  <div class="section-marker"><div class="section-dot"></div></div>
+  <div class="section-body">
+    <div class="section-title">{{ section.heading }}</div>
+    <ul>{% for b in section.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_languages() %}
 {% if languages or relocation %}
 <div class="section-wrap">
   <div class="section-marker"><div class="section-dot"></div></div>
@@ -174,6 +206,12 @@
   </div>
 </div>
 {% endif %}
+{% endmacro %}
+
+{% set default_order = ['summary', 'featured_project', 'experience', 'skills', 'education', 'projects', 'publications', 'other_sections', 'languages'] %}
+{% set order = section_order if section_order else default_order %}
+{% set macros = {'summary': render_summary, 'featured_project': render_featured_project, 'experience': render_experience, 'education': render_education, 'skills': render_skills, 'projects': render_projects, 'publications': render_publications, 'languages': render_languages, 'other_sections': render_other_sections} %}
+{% for key in order %}{{ macros[key]() }}{% endfor %}
 
 </body>
 </html>

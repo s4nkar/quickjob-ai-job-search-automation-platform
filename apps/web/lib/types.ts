@@ -224,10 +224,20 @@ export interface CvData {
   relocation: string | null
   // Catch-all for resume sections that don't fit any category above (e.g.
   // Volunteering, Patents, Awards) — preserved with their original heading
-  // rather than dropped or misfiled. Not yet editable in the editor form;
-  // it passes through untouched and renders in the standard template.
+  // rather than dropped or misfiled. Editable in the editor's step tabs and
+  // rendered by every template.
   other_sections: CvOtherSection[]
+  // User-controlled order of section "kinds" (see SectionKey) — empty means
+  // "not customized," and each template falls back to its own historical
+  // hardcoded order. Excludes "relocation" (bundled with languages) and
+  // treats other_sections as ONE slot (its entries keep their own array
+  // order rather than being individually interleaved).
+  section_order: SectionKey[]
 }
+
+export type SectionKey =
+  | 'summary' | 'featured_project' | 'experience' | 'education'
+  | 'skills' | 'projects' | 'publications' | 'languages' | 'other_sections'
 
 export interface InterviewQuestion {
   question: string

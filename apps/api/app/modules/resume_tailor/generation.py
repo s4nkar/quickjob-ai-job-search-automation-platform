@@ -1,4 +1,6 @@
-"""All LLM prompt construction/parsing for resume-tailor.
+"""All LLM prompt orchestration for resume-tailor (calling the LLM, parsing
+JSON, validating, caching) — prompt content and version constants live in
+prompts.py, imported below.
 
 Two independent LLM-facing operations, deliberately split because base_cv_data
 must now be dedup'd per resume version, independent of any specific JD (see
@@ -12,11 +14,6 @@ models.py's ResumeVersion.base_cv_data):
 
 Also owns JD language detection/translation (_is_english/_translate_jd) since
 that's the other place this module calls the LLM.
-
-Version constants (MATCHER_VERSION/STRUCT_PROMPT_VERSION/PROSE_PROMPT_VERSION)
-live here rather than in matcher.py/chunker.py, which stay untouched — bumping
-one of these forces fresh cache keys and fresh get_or_create_session lookups
-(see repository.py/cache.py), with no manual cache-busting code needed.
 """
 
 from __future__ import annotations
@@ -31,6 +28,15 @@ from typing import TYPE_CHECKING, Any
 from app.core.config import settings
 from app.ai.llm import provider as ai_provider
 from app.modules.resume_tailor import cache as resume_cache
+from app.modules.resume_tailor.prompts import (
+    JD_TRANSLATE_SYSTEM_PROMPT,
+    MATCHER_VERSION,
+    PROSE_PROMPT_VERSION,
+    STRUCT_PROMPT_VERSION,
+    STRUCT_SYSTEM_PROMPT,
+    TAILOR_PROSE_SYSTEM_PROMPT,
+)
+from app.modules.resume_tailor.schemas import validate_cv_data
 from app.modules.resume_tailor.validation import validate_bullet_patch, validate_headline_skills, validate_summary
 
 if TYPE_CHECKING:
@@ -39,11 +45,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Bumping any of these forces a fresh cache key / fresh get_or_create_session
-# lookup — see cache.py and repository.py.
-MATCHER_VERSION = "matcher-v1"
-STRUCT_PROMPT_VERSION = "struct-v2"  # v2: added other_sections catch-all
-PROSE_PROMPT_VERSION = "prose-v2"  # v2: headline/summary now run through validation, not just bullets
+# Re-exported from prompts.py — MATCHER_VERSION/STRUCT_PROMPT_VERSION/
+# PROSE_PROMPT_VERSION are used throughout this module and by routes.py via
+# `generation.STRUCT_PROMPT_VERSION` etc.; kept accessible here so callers
+# don't need to know the constants physically live in a sibling file.
+__all__ = [
+    "MATCHER_VERSION", "STRUCT_PROMPT_VERSION", "PROSE_PROMPT_VERSION",
+    "generate_base_cv_data", "generate_tailor_prose", "translate_jd_if_needed",
+    "TailorProseResult",
+]
 
 
 # ── JD language detection/translation ───────────────────────────────
@@ -77,16 +87,13 @@ def _is_english(text: str) -> bool:
 
 async def _translate_jd(text: str) -> str:
     """Translate a non-English JD to English via the configured LLM."""
-    system = (
-        "Translate the following job description to English. "
-        "CRITICAL: Preserve ALL original line breaks, bullet points, and list structure exactly — "
-        "each item that was on its own line must remain on its own line after translation. "
-        "If the text contains the SAME content in BOTH German AND English already, "
-        "output ONLY the English version — do NOT translate the German again or duplicate any section. "
-        "Preserve all technical terms, tool names, company names, and section headers exactly. "
-        "Return only the translated text with no commentary or preamble."
-    )
-    return await ai_provider.generate_text(text[:4000], system, max_tokens=4000)
+    # tier="light" — same reasoning-leak risk as generate_base_cv_data/
+    # generate_tailor_prose, but worse here: there's no JSON parse boundary
+    # to catch a corrupted response, so a reasoning model prepending
+    # "Let me translate this..." would silently become part of the "clean"
+    # JD text fed into chunking/matching, with no error or degraded flag —
+    # not a loud failure, a silently worse match score.
+    return await ai_provider.generate_text(text[:4000], JD_TRANSLATE_SYSTEM_PROMPT, max_tokens=4000, tier="light")
 
 
 async def translate_jd_if_needed(job_description: str) -> str:
@@ -104,59 +111,6 @@ async def translate_jd_if_needed(job_description: str) -> str:
 
 # ── Base CV structuring (JD-agnostic, cached per resume version) ───
 
-_SYSTEM_STRUCT_BASE = """You are a professional CV writer. Parse the resume text into a structured JSON object.
-
-CRITICAL RULES — violating any of these produces a broken CV:
-1. full_name: Extract the COMPLETE name (e.g. "Sankar Dev Santhosh", NOT just "Sankar"). Never truncate.
-2. skills: For EVERY skill category, populate "items" as a non-empty comma-separated string of the actual tools/skills listed. NEVER leave "items" as null, empty string, or an empty list.
-3. languages: Copy language entries EXACTLY as written in the resume. Do NOT substitute, add, or remove languages.
-4. Completeness: Include ALL experience entries, ALL projects, ALL publications found in the resume. Do not omit any.
-5. bullets: Each string in ANY bullets array MUST NOT start with a bullet character (•, -, *, ▪, –). The template adds its own markers. Strip any such prefix before including the text.
-6. publications venue: Preserve the COMPLETE venue string verbatim, including any ranking qualifiers (e.g. "Q1-ranked", "Scopus indexed", "SJR"). Never truncate the venue name.
-7. featured_project: If the resume contains a section labelled "FEATURED PROJECT", "HIGHLIGHT PROJECT", or similar, you MUST extract it into the `featured_project` field. NEVER leave featured_project null if the resume shows one. Do NOT duplicate it in the `projects` array.
-8. other_sections: The categories above (experience/education/skills/projects/publications/languages) don't cover every possible resume section. If the resume has a section that doesn't fit any of them (e.g. "Volunteering", "Patents", "Certifications", "Awards", "References"), put it in `other_sections` with its ORIGINAL heading preserved verbatim. Do NOT drop it, and do NOT force it into an unrelated category above.
-
-Return ONLY this JSON structure (no markdown, no extra text):
-{
-  "full_name": "string — complete name",
-  "job_title": "string — headline/tagline",
-  "location": "string (City, Country)",
-  "email": "string",
-  "phone": "string or null",
-  "github": "string or null (path only, e.g. github.com/user)",
-  "linkedin": "string or null (path only, e.g. linkedin.com/in/user)",
-  "website": "string or null",
-  "work_authorization": "string or null",
-  "summary": "string — professional summary paragraph",
-  "featured_project": {
-    "name": "string", "year": "string or null", "tech": "string or null",
-    "bullets": ["string"], "results": "string or null"
-  },
-  "experience": [
-    {"title": "string", "company": "string", "location": "string or null",
-     "period": "string", "bullets": ["string"]}
-  ],
-  "education": [
-    {"degree": "string", "institution": "string", "location": "string or null",
-     "period": "string", "details": "string or null"}
-  ],
-  "skills": [
-    {"category": "string", "items": "SINGLE STRING — skills separated by commas, e.g. \\"Python, PyTorch, Docker\\". NOT an array. NEVER null or empty."}
-  ],
-  "projects": [
-    {"name": "string", "tech": "string or null", "bullets": ["string"]}
-  ],
-  "publications": [
-    {"title": "string", "venue": "string", "year": "string or null"}
-  ],
-  "languages": ["string — exact language entries from resume"],
-  "relocation": "string or null",
-  "other_sections": [
-    {"heading": "string — the section's ORIGINAL heading from the resume, e.g. \\"Volunteering\\"", "bullets": ["string"]}
-  ]
-}"""
-
-
 async def generate_base_cv_data(resume_text: str) -> dict[str, Any]:
     """Pure structural parsing, no JD/tailoring context — called at most once
     per resume_version_id and persisted to resume_versions.base_cv_data."""
@@ -165,13 +119,31 @@ async def generate_base_cv_data(resume_text: str) -> dict[str, Any]:
 RESUME TEXT:
 {resume_text[:6000]}"""
 
-    raw = await ai_provider.generate_text(prompt, _SYSTEM_STRUCT_BASE, max_tokens=4000)
+    # response_format=json_object structurally constrains the output to valid
+    # JSON — a "return ONLY JSON" prompt instruction alone was observed NOT
+    # being reliably honored: switching this call to tier="light" to dodge a
+    # reasoning model's chain-of-thought leak didn't fix it either, since the
+    # OpenRouter fallback model (and, on retest, the light model's own
+    # provider) exhibited the same leak. JSON mode fixes it at the API level
+    # regardless of which model serves the request, so tier="heavy" is back —
+    # better quality and a materially higher per-minute token ceiling on Groq
+    # than the light model had.
+    raw = await ai_provider.generate_text(
+        prompt, STRUCT_SYSTEM_PROMPT, max_tokens=4000, tier="heavy",
+        response_format={"type": "json_object"},
+    )
     try:
         start = raw.find("{")
         end = raw.rfind("}") + 1
-        return json.loads(raw[start:end])
+        parsed = json.loads(raw[start:end])
     except Exception as exc:
         raise ValueError(f"Failed to structure resume: malformed LLM JSON response: {exc!r}") from exc
+
+    # response_format=json_object only guarantees valid JSON syntax, not the
+    # right shape — validate_cv_data checks it field-by-field against
+    # CvDataSchema and falls back per-field so one malformed field (e.g.
+    # "skills" returned as a string) doesn't take down the whole result.
+    return validate_cv_data(parsed)
 
 
 # ── Tailoring prose (JD-specific, cached per resume+job+prompt+model) ──
@@ -211,7 +183,12 @@ def _prose_model_label() -> str:
     deployment is CURRENTLY configured to use, not necessarily whichever
     provider ends up serving after a fallback (unknowable before the call).
     A provider/model config change naturally busts the cache, which is the
-    actual goal."""
+    actual goal.
+
+    Must match the tier actually passed to generate_text_with_provider below
+    (tier="heavy") — response_format=json_object handles JSON compliance now,
+    so this call no longer needs to dodge the heavy model via a tier switch
+    (see the call site's comment)."""
     provider = settings.ai_provider.lower().strip()
     if provider == "groq":
         return f"groq:{settings.groq_model}"
@@ -253,40 +230,6 @@ def _bullet_ids_for_rewrites(
     return ids
 
 
-_TAILOR_PROSE_SYSTEM = """You are a CV tailoring assistant. The deterministic ATS analysis is already done —
-you receive its results and must NOT recompute scores, matched keywords, or missing keywords.
-
-Return ONLY valid JSON in this shape:
-{
-  "target_role": "<job title from the JD>",
-  "target_company": "<company name from the JD>",
-  "profile_headline": "<headline in the format: [target job title] | [relevant skill] | [relevant skill] | [relevant skill] — use the exact target job title from the JD as the first segment, then 2–3 skills from the resume most relevant to this specific role>",
-  "tailored_summary": "<professional summary paragraph — see tone rules below>",
-  "bullet_patches": [{"bullet_id": "<EXACT id shown in brackets in REWRITE CANDIDATES, e.g. b12>", "improved": "<sharpened framing>"}],
-  "implied_skills_to_add": [{"category": "<a skills category name matching how this resume already labels its skills>", "items": "<comma-separated foundational tools implied by the candidate's existing tech stack>"}],
-  "summary": "<1-paragraph honest fit assessment noting strengths and real gaps>"
-}
-
-Hard rules:
-- bullet_patches: ONLY patch bullets from the REWRITE CANDIDATES list. Echo the EXACT bullet_id shown in brackets — do NOT retype the original bullet text.
-  * PRESERVE every number, percentage, and metric from the original
-  * NEVER add tools, methods, or domains absent from the original
-  * Adjust only verb / framing / emphasis — the evidence must stay identical
-- implied_skills_to_add: for any tool or library in the MISSING KEYWORDS list that is clearly implied by the candidate's existing tech stack (e.g. Pandas/NumPy implied by PyTorch/ML work), add it under a category name that matches this resume's own skills section labelling. Only do this for standard foundational tools — never invent specialised domain experience. Leave empty if nothing qualifies.
-- profile_headline: lead with the exact job title from the JD, then 2–3 of the candidate's REAL skills most relevant to THIS SPECIFIC ROLE. Prefer specific technical skills (e.g. RAG, NLP, LangChain, Transformers, EU AI Act) over generic acronyms — NEVER use "AI", "ML", or "Machine Learning" as a standalone headline segment; they are redundant when the job title already implies them. Draw from MATCHED KEYWORDS and resume skills when they clearly overlap the JD's domain. Never add skills the resume doesn't show.
-- tailored_summary TONE AND CONTENT — strict CV style, not cover letter style:
-  * Write in NOMINATIVE STYLE ONLY — no pronouns at all. Do NOT use "I", "my", "their", "they", "this candidate", "the candidate". Start directly with a noun phrase: "Applied AI Engineer with 3+ years…".
-  * NO cover-letter phrases: "I am confident", "I am excited", "I look forward to", "I believe".
-  * NO vague filler: "drive innovation", "leveraging expertise", "improve complex workflows", "passionate about".
-  * Lead with years of experience and core specialty, e.g. "Applied AI Engineer with 3+ years of experience building..."
-  * Include at least ONE specific achievement from the resume (a metric, a project name, or a publication). Make it feel like THIS candidate, not any AI engineer.
-  * Reframe genuine transferable experience for this specific role. Never claim domain expertise the resume does not show.
-  * Write in your own words — do NOT copy or paraphrase sentence fragments from the JD requirements. The summary must read as the candidate's own story, not a reflection of the job posting.
-  * NEVER mention any skill from the MISSING KEYWORDS list — those are absent from the resume.
-- summary: ground the fit assessment in the provided CRITICAL GAPS and TRANSFERABLE STRENGTHS.
-- Return ONLY valid JSON, no markdown fences."""
-
-
 async def _generate_tailor_prose_uncached(
     resume_text: str,
     resume_chunks: list["Chunk"],
@@ -325,7 +268,14 @@ RESUME (for extracting target_role/target_company and grounding prose only):
 {resume_text[:3500]}"""
 
     try:
-        raw, provider = await ai_provider.generate_text_with_provider(prompt, _TAILOR_PROSE_SYSTEM, max_tokens=1200)
+        # response_format=json_object — see generate_base_cv_data's comment.
+        # tier="heavy" for the same reason: JSON compliance is now enforced
+        # structurally, so there's no need to trade down to the light
+        # model's lower quality and lower per-minute token ceiling.
+        raw, provider = await ai_provider.generate_text_with_provider(
+            prompt, TAILOR_PROSE_SYSTEM_PROMPT, max_tokens=1200, tier="heavy",
+            response_format={"type": "json_object"},
+        )
     except ai_provider.AIGenerationError as exc:
         logger.warning("Tailor prose generation failed: %r — returning deterministic analysis only", exc)
         return TailorProseResult(ai_status="degraded", ai_error=str(exc))

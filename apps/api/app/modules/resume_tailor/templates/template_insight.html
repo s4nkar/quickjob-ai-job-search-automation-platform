@@ -42,6 +42,115 @@
   .lang-item { font-size: 7.5pt; color: #9ab8d4; margin-bottom: 3px; }
 </style>
 </head>
+{% macro render_skills() %}
+{% if skills %}
+<div class="sidebar-section">Expertise</div>
+{% for skill in skills %}
+<div class="skill-cat">{{ skill['category'] }}</div>
+<div class="skill-items">{{ skill['items'] if skill['items'] is string else skill['items'] | join(', ') }}</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_education() %}
+{% if education %}
+<div class="sidebar-section">Education</div>
+{% for edu in education %}
+<div class="ref-card">
+  <div class="ref-name">{{ edu.degree }}</div>
+  <div class="ref-detail">{{ edu.institution }}</div>
+  <div class="ref-detail">{{ edu.period }}</div>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_languages() %}
+{% if languages %}
+<div class="sidebar-section">Languages</div>
+{% for lang in languages %}<div class="lang-item">{{ lang }}</div>{% endfor %}
+{% endif %}
+{% if relocation %}<div class="sidebar-section">Relocation</div><div class="lang-item">{{ relocation }}</div>{% endif %}
+{% endmacro %}
+
+{% macro render_summary() %}
+{% if summary %}
+<div class="section-title">Profile</div>
+<p style="font-size: 8.5pt; line-height: 1.6; margin-bottom: 4px; color: #333;">{{ summary }}</p>
+{% endif %}
+{% endmacro %}
+
+{% macro render_featured_project() %}
+{% if featured_project %}
+<div class="section-title">Featured Project</div>
+<div class="mb1">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;">
+    <div class="exp-title">{{ featured_project.name }}</div>
+    {% if featured_project.year %}<span style="font-size:8pt;color:#888;">{{ featured_project.year }}</span>{% endif %}
+  </div>
+  {% if featured_project.tech %}<div class="exp-company">{{ featured_project.tech }}</div>{% endif %}
+  <ul>{% for b in featured_project.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+  {% if featured_project.results %}<p style="font-size:8.5pt;font-weight:bold;margin-top:3px;">{{ featured_project.results }}</p>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro render_experience() %}
+{% if experience %}
+<div class="section-title">Experience</div>
+{% for exp in experience %}
+<div class="mb1">
+  <div class="exp-row">
+    <div class="exp-left"><div class="exp-title">{{ exp.title }}</div><div class="exp-company">{{ exp.company }}{% if exp.location %} · {{ exp.location }}{% endif %}</div></div>
+    <div class="exp-right">{{ exp.period }}</div>
+  </div>
+  <ul>{% for b in exp.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_projects() %}
+{% if projects %}
+<div class="section-title">Projects</div>
+{% for proj in projects %}
+<div class="mb1">
+  <div class="exp-title">{{ proj.name }}</div>
+  {% if proj.tech %}<div style="font-size: 8pt; color: #3a7ab5; font-style: italic; margin: 1px 0 3px;">{{ proj.tech }}</div>{% endif %}
+  <ul>{% for b in proj.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_publications() %}
+{% if publications %}
+<div class="section-title">Publications</div>
+{% for pub in publications %}
+<div class="mb1">
+  <p style="font-weight: bold; font-size: 8.5pt; color: #0f2844;">{{ pub.title }}</p>
+  <p style="font-style: italic; font-size: 8pt; color: #555;">{{ pub.venue }}{% if pub.year %}, {{ pub.year }}{% endif %}</p>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_other_sections() %}
+{% if other_sections %}
+{% for section in other_sections %}
+<div class="section-title">{{ section.heading }}</div>
+<ul>{% for b in section.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% set default_order = ['skills', 'education', 'languages', 'summary', 'featured_project', 'experience', 'projects', 'publications', 'other_sections'] %}
+{% set sidebar_keys = ['skills', 'education', 'languages'] %}
+{% set order = section_order if section_order else default_order %}
+{% set sidebar_order = order | select('in', sidebar_keys) | list %}
+{% set main_order = order | reject('in', sidebar_keys) | list %}
+{% set macros = {'summary': render_summary, 'featured_project': render_featured_project, 'experience': render_experience, 'education': render_education, 'skills': render_skills, 'projects': render_projects, 'publications': render_publications, 'languages': render_languages, 'other_sections': render_other_sections} %}
+
 <body>
 <table class="layout">
 <tr>
@@ -58,84 +167,10 @@
   {% if website %}<div class="contact-item"><span class="contact-label">Web</span>{{ website }}</div>{% endif %}
   {% if work_authorization %}<div class="contact-item"><span class="contact-label">Work Auth</span>{{ work_authorization }}</div>{% endif %}
 
-  {% if skills %}
-  <div class="sidebar-section">Expertise</div>
-  {% for skill in skills %}
-  <div class="skill-cat">{{ skill['category'] }}</div>
-  <div class="skill-items">{{ skill['items'] if skill['items'] is string else skill['items'] | join(', ') }}</div>
-  {% endfor %}
-  {% endif %}
-
-  {% if education %}
-  <div class="sidebar-section">Education</div>
-  {% for edu in education %}
-  <div class="ref-card">
-    <div class="ref-name">{{ edu.degree }}</div>
-    <div class="ref-detail">{{ edu.institution }}</div>
-    <div class="ref-detail">{{ edu.period }}</div>
-  </div>
-  {% endfor %}
-  {% endif %}
-
-  {% if languages %}
-  <div class="sidebar-section">Languages</div>
-  {% for lang in languages %}<div class="lang-item">{{ lang }}</div>{% endfor %}
-  {% endif %}
-
-  {% if relocation %}<div class="sidebar-section">Relocation</div><div class="lang-item">{{ relocation }}</div>{% endif %}
+  {% for key in sidebar_order %}{{ macros[key]() }}{% endfor %}
 </td>
 <td class="col-right">
-  {% if summary %}
-  <div class="section-title">Profile</div>
-  <p style="font-size: 8.5pt; line-height: 1.6; margin-bottom: 4px; color: #333;">{{ summary }}</p>
-  {% endif %}
-
-  {% if featured_project %}
-  <div class="section-title">Featured Project</div>
-  <div class="mb1">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;">
-      <div class="exp-title">{{ featured_project.name }}</div>
-      {% if featured_project.year %}<span style="font-size:8pt;color:#888;">{{ featured_project.year }}</span>{% endif %}
-    </div>
-    {% if featured_project.tech %}<div class="exp-company">{{ featured_project.tech }}</div>{% endif %}
-    <ul>{% for b in featured_project.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
-    {% if featured_project.results %}<p style="font-size:8.5pt;font-weight:bold;margin-top:3px;">{{ featured_project.results }}</p>{% endif %}
-  </div>
-  {% endif %}
-
-  {% if experience %}
-  <div class="section-title">Experience</div>
-  {% for exp in experience %}
-  <div class="mb1">
-    <div class="exp-row">
-      <div class="exp-left"><div class="exp-title">{{ exp.title }}</div><div class="exp-company">{{ exp.company }}{% if exp.location %} · {{ exp.location }}{% endif %}</div></div>
-      <div class="exp-right">{{ exp.period }}</div>
-    </div>
-    <ul>{% for b in exp.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
-  </div>
-  {% endfor %}
-  {% endif %}
-
-  {% if projects %}
-  <div class="section-title">Projects</div>
-  {% for proj in projects %}
-  <div class="mb1">
-    <div class="exp-title">{{ proj.name }}</div>
-    {% if proj.tech %}<div style="font-size: 8pt; color: #3a7ab5; font-style: italic; margin: 1px 0 3px;">{{ proj.tech }}</div>{% endif %}
-    <ul>{% for b in proj.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
-  </div>
-  {% endfor %}
-  {% endif %}
-
-  {% if publications %}
-  <div class="section-title">Publications</div>
-  {% for pub in publications %}
-  <div class="mb1">
-    <p style="font-weight: bold; font-size: 8.5pt; color: #0f2844;">{{ pub.title }}</p>
-    <p style="font-style: italic; font-size: 8pt; color: #555;">{{ pub.venue }}{% if pub.year %}, {{ pub.year }}{% endif %}</p>
-  </div>
-  {% endfor %}
-  {% endif %}
+  {% for key in main_order %}{{ macros[key]() }}{% endfor %}
 </td>
 </tr>
 </table>

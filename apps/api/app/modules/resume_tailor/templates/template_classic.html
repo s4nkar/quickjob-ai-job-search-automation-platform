@@ -69,6 +69,120 @@
   p { margin: 0; }
 </style>
 </head>
+
+{% macro render_skills() %}
+{% if skills %}
+<div class="sidebar-section">Technical Skills</div>
+{% for skill in skills %}
+<div class="skill-cat">{{ skill['category'] }}</div>
+<div class="skill-items">{{ skill['items'] if skill['items'] is string else skill['items'] | join(', ') }}</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_languages() %}
+{% if languages %}
+<div class="sidebar-section">Languages</div>
+{% for lang in languages %}
+<div class="lang-item">{{ lang }}</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_summary() %}
+{% if summary %}
+<div class="section-title">Profile</div>
+<p style="font-size: 8.5pt; line-height: 1.5; margin-bottom: 0;">{{ summary }}</p>
+{% endif %}
+{% endmacro %}
+
+{% macro render_experience() %}
+{% if experience %}
+<div class="section-title">Professional Experience</div>
+{% for exp in experience %}
+<div class="mb2">
+  <div class="exp-row">
+    <div class="exp-left"><div class="exp-title">{{ exp.title }}</div></div>
+    <div class="exp-right">{{ exp.period }}</div>
+  </div>
+  <div class="exp-company">{{ exp.company }}{% if exp.location %} · {{ exp.location }}{% endif %}</div>
+  <ul>{% for b in exp.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_education() %}
+{% if education %}
+<div class="section-title">Education</div>
+{% for edu in education %}
+<div class="mb1">
+  <div class="exp-row">
+    <div class="exp-left"><div class="edu-degree">{{ edu.degree }}</div></div>
+    <div class="exp-right">{{ edu.period }}</div>
+  </div>
+  <div class="edu-inst">{{ edu.institution }}{% if edu.location %} · {{ edu.location }}{% endif %}</div>
+  {% if edu.details %}<div class="edu-detail">{{ edu.details }}</div>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_projects() %}
+{% if projects %}
+<div class="section-title">Selected Projects</div>
+{% for proj in projects %}
+<div class="mb2">
+  <div class="proj-name">{{ proj.name }}</div>
+  {% if proj.tech %}<div class="proj-tech">{{ proj.tech }}</div>{% endif %}
+  <ul>{% for b in proj.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_publications() %}
+{% if publications %}
+<div class="section-title">Publications</div>
+{% for pub in publications %}
+<div class="mb1">
+  <div class="pub-title">{{ pub.venue }}{% if pub.year %}, {{ pub.year }}{% endif %}</div>
+  <div class="pub-venue">{{ pub.title }}</div>
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_featured_project() %}
+{% if featured_project %}
+<div class="section-title">Featured Project</div>
+<div class="mb2">
+  <div class="exp-row">
+    <div class="exp-left"><div class="proj-name">{{ featured_project.name }}</div></div>
+    {% if featured_project.year %}<div class="exp-right">{{ featured_project.year }}</div>{% endif %}
+  </div>
+  {% if featured_project.tech %}<div class="proj-tech">{{ featured_project.tech }}</div>{% endif %}
+  <ul>{% for b in featured_project.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro render_other_sections() %}
+{% if other_sections %}
+{% for section in other_sections %}
+<div class="section-title">{{ section.heading }}</div>
+<ul>{% for b in section.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% set default_order = ['skills', 'languages', 'summary', 'experience', 'education', 'projects', 'publications', 'featured_project', 'other_sections'] %}
+{% set sidebar_keys = ['skills', 'languages'] %}
+{% set order = section_order if section_order else default_order %}
+{% set sidebar_order = order | select('in', sidebar_keys) | list %}
+{% set main_order = order | reject('in', sidebar_keys) | list %}
+{% set macros = {'summary': render_summary, 'featured_project': render_featured_project, 'experience': render_experience, 'education': render_education, 'skills': render_skills, 'projects': render_projects, 'publications': render_publications, 'languages': render_languages, 'other_sections': render_other_sections} %}
+
 <body>
 <table class="layout" cellpadding="0" cellspacing="0">
 <tr>
@@ -95,20 +209,7 @@
     {% if date_of_birth %}<div class="contact-item"><span class="contact-label">Date of Birth</span>{{ date_of_birth }}</div>{% endif %}
     {% if nationality %}<div class="contact-item"><span class="contact-label">Nationality</span>{{ nationality }}</div>{% endif %}
 
-    {% if skills %}
-    <div class="sidebar-section">Technical Skills</div>
-    {% for skill in skills %}
-    <div class="skill-cat">{{ skill['category'] }}</div>
-    <div class="skill-items">{{ skill['items'] if skill['items'] is string else skill['items'] | join(', ') }}</div>
-    {% endfor %}
-    {% endif %}
-
-    {% if languages %}
-    <div class="sidebar-section">Languages</div>
-    {% for lang in languages %}
-    <div class="lang-item">{{ lang }}</div>
-    {% endfor %}
-    {% endif %}
+    {% for key in sidebar_order %}{{ macros[key]() }}{% endfor %}
 
     {% if work_authorization %}
     <div class="sidebar-section">Work Authorization</div>
@@ -121,71 +222,7 @@
     <div class="main-name">{{ full_name }}</div>
     {% if job_title %}<div class="main-title">{{ job_title }}</div>{% endif %}
 
-    {% if summary %}
-    <div class="section-title">Profile</div>
-    <p style="font-size: 8.5pt; line-height: 1.5; margin-bottom: 0;">{{ summary }}</p>
-    {% endif %}
-
-    {% if experience %}
-    <div class="section-title">Professional Experience</div>
-    {% for exp in experience %}
-    <div class="mb2">
-      <div class="exp-row">
-        <div class="exp-left"><div class="exp-title">{{ exp.title }}</div></div>
-        <div class="exp-right">{{ exp.period }}</div>
-      </div>
-      <div class="exp-company">{{ exp.company }}{% if exp.location %} · {{ exp.location }}{% endif %}</div>
-      <ul>{% for b in exp.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
-    </div>
-    {% endfor %}
-    {% endif %}
-
-    {% if education %}
-    <div class="section-title">Education</div>
-    {% for edu in education %}
-    <div class="mb1">
-      <div class="exp-row">
-        <div class="exp-left"><div class="edu-degree">{{ edu.degree }}</div></div>
-        <div class="exp-right">{{ edu.period }}</div>
-      </div>
-      <div class="edu-inst">{{ edu.institution }}{% if edu.location %} · {{ edu.location }}{% endif %}</div>
-      {% if edu.details %}<div class="edu-detail">{{ edu.details }}</div>{% endif %}
-    </div>
-    {% endfor %}
-    {% endif %}
-
-    {% if projects %}
-    <div class="section-title">Selected Projects</div>
-    {% for proj in projects %}
-    <div class="mb2">
-      <div class="proj-name">{{ proj.name }}</div>
-      {% if proj.tech %}<div class="proj-tech">{{ proj.tech }}</div>{% endif %}
-      <ul>{% for b in proj.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
-    </div>
-    {% endfor %}
-    {% endif %}
-
-    {% if publications %}
-    <div class="section-title">Publications</div>
-    {% for pub in publications %}
-    <div class="mb1">
-      <div class="pub-title">{{ pub.venue }}{% if pub.year %}, {{ pub.year }}{% endif %}</div>
-      <div class="pub-venue">{{ pub.title }}</div>
-    </div>
-    {% endfor %}
-    {% endif %}
-
-    {% if featured_project %}
-    <div class="section-title">Featured Project</div>
-    <div class="mb2">
-      <div class="exp-row">
-        <div class="exp-left"><div class="proj-name">{{ featured_project.name }}</div></div>
-        {% if featured_project.year %}<div class="exp-right">{{ featured_project.year }}</div>{% endif %}
-      </div>
-      {% if featured_project.tech %}<div class="proj-tech">{{ featured_project.tech }}</div>{% endif %}
-      <ul>{% for b in featured_project.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
+    {% for key in main_order %}{{ macros[key]() }}{% endfor %}
   </td>
 </tr>
 </table>

@@ -8,9 +8,16 @@ Both Groq and OpenRouter expose OpenAI-compatible REST APIs and are reached
 via httpx — no extra SDK needed for either.
 
 Public interface:
-    generate_text(prompt, system, max_tokens, tier="heavy") -> str
-    generate_text_with_provider(prompt, system, max_tokens, tier="heavy") -> (str, provider_name)
+    generate_text(prompt, system, max_tokens, tier="heavy", response_format=None) -> str
+    generate_text_with_provider(prompt, system, max_tokens, tier="heavy", response_format=None) -> (str, provider_name)
     stream_text(prompt, system, max_tokens, tier="heavy")   -> AsyncGenerator[str, None]
+
+response_format: pass {"type": "json_object"} to structurally constrain the
+model's output to valid JSON (Groq/OpenAI-compatible "JSON mode") instead of
+relying on a prompt instruction alone — see _openai_compat_generate's comment
+for why this matters. Not available on the streaming path. Per Groq/OpenAI's
+own requirement, the word "JSON" must appear somewhere in the prompt/system
+message when this is set, or the API rejects the request.
 
 Both generate_text and stream_text raise AIGenerationError when every provider
 in the chain fails — callers should catch this specifically and degrade
@@ -28,10 +35,14 @@ sole fallback and isn't tier-split - it's rarely invoked (only on a Groq
 failure), so one general-purpose non-reasoning model serves both tiers.
 
 Failure semantics:
-    - generate_text retries the next provider on rate-limit / 5xx / network errors,
-      AND on an empty completion (e.g. a reasoning model exhausting max_tokens on
+    - generate_text retries the next provider on 5xx / network errors, AND on an
+      empty completion (e.g. a reasoning model exhausting max_tokens on
       chain-of-thought before writing any content) - an empty string is never
       treated as a successful response.
+    - A 429 gets ONE short backoff-and-retry on the SAME provider first (see
+      _RATE_LIMIT_BACKOFF_SECONDS) before falling through to the next provider
+      in the chain - a per-minute-token-budget blip is often gone in a couple
+      seconds, cheaper than downgrading to a different model.
     - stream_text retries the next provider ONLY if the first provider fails before
       yielding any tokens. Once a stream has started emitting, we do not switch
       mid-stream (would produce garbled output).
@@ -39,6 +50,7 @@ Failure semantics:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import AsyncGenerator
@@ -49,6 +61,12 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# One short backoff-and-retry on the SAME provider before downgrading to the
+# next one in the chain — a 429 is often a brief per-minute-token-budget blip,
+# and a couple seconds' wait is cheaper than switching models mid-request
+# (different model, different prompt-adherence characteristics).
+_RATE_LIMIT_BACKOFF_SECONDS = 2.0
+
 
 class _ProviderError(Exception):
     """Transient provider failure — caller should try the next provider."""
@@ -56,6 +74,11 @@ class _ProviderError(Exception):
 
 class _ProviderUnavailable(_ProviderError):
     """Provider is not configured (e.g. missing API key) — skip without logging as error."""
+
+
+class _ProviderRateLimited(_ProviderError):
+    """The provider responded 429 — worth one short same-provider retry before
+    falling through to the next provider in the chain."""
 
 
 class AIGenerationError(RuntimeError):
@@ -69,6 +92,7 @@ class AIGenerationError(RuntimeError):
 async def _openai_compat_generate(
     prompt: str, system: str, max_tokens: int,
     base_url: str, api_key: str, model: str, label: str,
+    response_format: dict | None = None,
 ) -> str:
     if not api_key:
         raise _ProviderUnavailable(f"{label}: API key not configured")
@@ -78,15 +102,32 @@ async def _openai_compat_generate(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.7}
+    if response_format:
+        # Structural JSON enforcement (constrains decoding to valid JSON
+        # tokens), not a prompt instruction — a "return ONLY JSON" system
+        # prompt alone was observed not being reliably honored (models kept
+        # leaking chain-of-thought/planning text as the response content
+        # instead of JSON, exhausting max_tokens before ever emitting the
+        # actual object). response_format enforces this at the API level
+        # regardless of which model ends up serving the request. Per Groq/
+        # OpenAI's own requirement, the word "JSON" must appear somewhere in
+        # the prompt/system message for this to work — every caller that
+        # sets this already says "Return ONLY valid JSON" in its prompt.
+        body["response_format"] = response_format
+
     try:
         async with httpx.AsyncClient(timeout=settings.ai_request_timeout_seconds) as client:
             resp = await client.post(
                 f"{base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.7},
+                json=body,
             )
     except httpx.HTTPError as exc:
         raise _ProviderError(f"{label} network error: {exc!r}") from exc
+
+    if resp.status_code == 429:
+        raise _ProviderRateLimited(f"{label} HTTP 429: {resp.text[:200]}")
 
     if resp.status_code >= 400:
         # Every call site here always sends a well-formed payload (message shape
@@ -176,16 +217,20 @@ def _groq_model(tier: str) -> str:
     return settings.groq_light_model if tier == "light" else settings.groq_model
 
 
-async def _dispatch_generate(provider: str, prompt: str, system: str, max_tokens: int, tier: str) -> str:
+async def _dispatch_generate(
+    provider: str, prompt: str, system: str, max_tokens: int, tier: str, response_format: dict | None = None,
+) -> str:
     if provider == "groq":
         return await _openai_compat_generate(
             prompt, system, max_tokens,
             settings.groq_base_url, settings.groq_api_key, _groq_model(tier), "groq",
+            response_format=response_format,
         )
     if provider == "openrouter":
         return await _openai_compat_generate(
             prompt, system, max_tokens,
             settings.openrouter_base_url, settings.openrouter_api_key, settings.openrouter_model, "openrouter",
+            response_format=response_format,
         )
     raise ValueError(f"Unknown AI provider: {provider!r}")
 
@@ -206,19 +251,35 @@ def _dispatch_stream(provider: str, prompt: str, system: str, max_tokens: int, t
 
 # ── Public Interface ─────────────────────────────────────────────
 
-async def _run_chain(prompt: str, system: str, max_tokens: int, tier: str) -> tuple[str, str]:
+async def _run_chain(
+    prompt: str, system: str, max_tokens: int, tier: str, response_format: dict | None = None,
+) -> tuple[str, str]:
     """Shared dispatch loop for generate_text/generate_text_with_provider. Returns
     (content, provider_name). Raises AIGenerationError if every provider fails."""
     chain = _provider_chain()
     last_error: Exception | None = None
     for provider in chain:
         try:
-            content = await _dispatch_generate(provider, prompt, system, max_tokens, tier)
+            content = await _dispatch_generate(provider, prompt, system, max_tokens, tier, response_format)
             return content, provider
         except _ProviderUnavailable as exc:
             logger.info("ai_provider skip %s: %s", provider, exc)
             last_error = exc
             continue
+        except _ProviderRateLimited as exc:
+            logger.warning(
+                "ai_provider rate-limited on %s, backing off %.1fs before one retry: %s",
+                provider, _RATE_LIMIT_BACKOFF_SECONDS, exc,
+            )
+            last_error = exc
+            await asyncio.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
+            try:
+                content = await _dispatch_generate(provider, prompt, system, max_tokens, tier, response_format)
+                return content, provider
+            except _ProviderError as retry_exc:
+                logger.warning("ai_provider retry after rate limit also failed on %s: %s", provider, retry_exc)
+                last_error = retry_exc
+                continue
         except _ProviderError as exc:
             logger.warning("ai_provider transient failure on %s: %s", provider, exc)
             last_error = exc
@@ -226,18 +287,20 @@ async def _run_chain(prompt: str, system: str, max_tokens: int, tier: str) -> tu
     raise AIGenerationError(f"All AI providers exhausted ({chain}). Last error: {last_error!r}")
 
 
-async def generate_text(prompt: str, system: str = "", max_tokens: int = 2048, tier: str = "heavy") -> str:
-    content, _ = await _run_chain(prompt, system, max_tokens, tier)
+async def generate_text(
+    prompt: str, system: str = "", max_tokens: int = 2048, tier: str = "heavy", response_format: dict | None = None,
+) -> str:
+    content, _ = await _run_chain(prompt, system, max_tokens, tier, response_format)
     return content
 
 
 async def generate_text_with_provider(
-    prompt: str, system: str = "", max_tokens: int = 2048, tier: str = "heavy",
+    prompt: str, system: str = "", max_tokens: int = 2048, tier: str = "heavy", response_format: dict | None = None,
 ) -> tuple[str, str]:
     """Same as generate_text but also returns which provider served the response —
     for callers surfacing provider-level observability (e.g. resume-tailor's
     ai.provider field). Most callers should keep using generate_text."""
-    return await _run_chain(prompt, system, max_tokens, tier)
+    return await _run_chain(prompt, system, max_tokens, tier, response_format)
 
 
 async def stream_text(prompt: str, system: str = "", max_tokens: int = 2048, tier: str = "heavy") -> AsyncGenerator[str, None]:
