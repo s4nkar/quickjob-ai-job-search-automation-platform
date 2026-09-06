@@ -70,6 +70,7 @@ class EditorResponse(BaseModel):
     template_id: str
     templates: list[dict[str, Any]]
     is_draft: bool = False
+    title: str | None = None
 
 
 class TemplateListResponse(BaseModel):
@@ -97,6 +98,10 @@ class PdfRequest(BaseModel):
 
 class DraftSaveRequest(BaseModel):
     cv_data: dict[str, Any]
+
+
+class TitleUpdateRequest(BaseModel):
+    title: str = Field(..., max_length=200)
 
 
 # ── CvDataSchema — validates generate_base_cv_data's LLM output ──────

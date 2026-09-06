@@ -12,7 +12,7 @@ import {
   ArrowLeft, Download, Loader2, Plus, Minus, Trash2, ChevronDown,
   FileText, Briefcase, GraduationCap, Wrench, FolderOpen, BookOpen,
   Languages, AlertTriangle, Star, Eye, EyeOff, Layers, RotateCcw,
-  LayoutTemplate, User, GripVertical,
+  LayoutTemplate, User, GripVertical, Pencil,
 } from 'lucide-react'
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
@@ -32,6 +32,19 @@ import { PREVIEW_BASE_HEIGHT, PREVIEW_BASE_WIDTH, ZOOM_LEVELS } from './constant
 // and non-draggable since it's contact fields, not a printed section.
 
 type StepId = 'personal' | SectionKey
+
+// Display label when a session hasn't been renamed yet — never persisted as
+// the actual title (that stays null server-side until the user renames it),
+// just what shows in the toolbar and what the PDF filename falls back to.
+const DEFAULT_SESSION_TITLE = 'Primary Resume'
+
+// Strips characters invalid across Windows/macOS/Linux filenames rather than
+// just the couple that happen to break on the developer's own OS — a title
+// with a "/" or ":" (e.g. "Backend Eng: Round 2") would otherwise silently
+// truncate or fail the download on some platforms.
+function sanitizeFilename(name: string): string {
+  return name.trim().replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').slice(0, 100) || 'Resume'
+}
 
 const DEFAULT_SECTION_ORDER: SectionKey[] = [
   'summary', 'featured_project', 'experience', 'education',
@@ -165,6 +178,9 @@ function EditorInner() {
   const [originalPdfUrl, setOriginalPdfUrl] = useState<string | null>(null)
   const [showOriginalPdf, setShowOriginalPdf] = useState(false)
   const [cvData, setCvData] = useState<CvData | null>(null)
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null)
+  const [titleEditing, setTitleEditing] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
   const [templates, setTemplates] = useState<TemplateMeta[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('standard')
   const [loading, setLoading] = useState(true)
@@ -230,6 +246,7 @@ function EditorInner() {
     ]).then(([editorRes, profile]) => {
       if (editorRes.templates) setTemplates(editorRes.templates)
       if (editorRes.template_id) setSelectedTemplate(editorRes.template_id)
+      setSessionTitle(editorRes.title ?? null)
       if (editorRes.cv_data) {
         setCvData(editorRes.cv_data)
         if (editorRes.is_draft) toast({ title: 'Resumed your saved draft' })
@@ -362,17 +379,29 @@ function EditorInner() {
     setAutoZoom(true)
   }
 
-  // Auto-fit: keeps the preview at exactly the canvas's available width
-  // (minus its own padding) instead of a fixed 100% that can overflow once
-  // the form pane + layouts rail leave less room than the document's native
-  // 794px width — that overflow was producing a horizontal scrollbar and
-  // clipped content on anything narrower than ~1500px wide. A ResizeObserver
-  // (not just a window resize listener) so toggling the rail — which changes
-  // available width without resizing the window — also re-fits.
+  // Auto-fit: a CEILING, not a discount. Target a comfortable 80% by
+  // default, but only drop below that if the container genuinely can't fit
+  // 80% without overflowing — never shrink further than what's actually
+  // necessary. A flat multiplier (tried previously) compounds instead of
+  // helping: on a container that only fits ~72% before any discount,
+  // multiplying by 0.8 produces an unreadable ~58%. A ceiling fixes both
+  // complaints at once — wide screens cap at a comfortable 80% instead of
+  // stretching to fill 100%+, narrow screens still get the largest size that
+  // actually fits, unmodified. A ResizeObserver (not just a window resize
+  // listener) so toggling the rail — which changes available width without
+  // resizing the window — also re-fits. `loading` is in the deps for a real
+  // reason, not just as a safety net: on first mount this effect runs while
+  // the page is still in its loading state, before the canvas <div> (and
+  // previewCanvasRef) exist in the DOM — `el` is null, so it bails out
+  // immediately without ever attaching the ResizeObserver. Since `autoZoom`
+  // itself never changes on a normal page load, nothing would otherwise
+  // re-run this effect once the canvas actually mounts. Including `loading`
+  // makes the effect re-run the moment the canvas becomes available.
   useEffect(() => {
     if (!autoZoom) return
     const el = previewCanvasRef.current
     if (!el) return
+    const COMFORT_ZOOM_CAP = 90
     const compute = () => {
       const style = window.getComputedStyle(el)
       const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
@@ -382,17 +411,18 @@ function EditorInner() {
       // (with justify-center) clip both edges instead of neither.
       const availableWidth = el.clientWidth - paddingX - 4
       if (availableWidth <= 0) return
-      const fitPercent = Math.min(
+      const rawFitPercent = Math.min(
         ZOOM_LEVELS[ZOOM_LEVELS.length - 1],
         Math.max(ZOOM_LEVELS[0], (availableWidth / PREVIEW_BASE_WIDTH) * 100)
       )
+      const fitPercent = Math.min(COMFORT_ZOOM_CAP, rawFitPercent)
       setZoom(Math.floor(fitPercent))
     }
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [autoZoom])
+  }, [autoZoom, loading])
 
   // ── Experience helpers ──────────────────────────────────────────
 
@@ -584,6 +614,29 @@ function EditorInner() {
     setSelectedTemplate(id)
   }
 
+  // ── Rename session ───────────────────────────────────────────────
+
+  async function saveTitle(newTitle: string) {
+    const trimmed = newTitle.trim()
+    setTitleEditing(false)
+    if (!sessionId || !trimmed || trimmed === (sessionTitle ?? DEFAULT_SESSION_TITLE)) return
+    try {
+      const res = await apiFetch(`/api/ai/tailor/${sessionId}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      })
+      if (res.ok) {
+        setSessionTitle(trimmed)
+      } else {
+        const json = await res.json().catch(() => null)
+        toast({ title: json?.detail || 'Could not rename resume', variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Network error renaming resume', variant: 'destructive' })
+    }
+  }
+
   // ── Download ────────────────────────────────────────────────────
 
   async function handleDownload() {
@@ -604,7 +657,7 @@ function EditorInner() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `tailored_cv_${selectedTemplate}.pdf`
+      a.download = `${sanitizeFilename(sessionTitle ?? DEFAULT_SESSION_TITLE)}.pdf`
       a.click()
       URL.revokeObjectURL(url)
       toast({ title: 'PDF downloaded!' })
@@ -689,12 +742,37 @@ function EditorInner() {
           <ArrowLeft className="h-4 w-4" /> <span className="hidden sm:inline">Back</span>
         </button>
 
-        <div className="hidden md:flex items-center gap-2.5 shrink-0 mr-2">
+        <div className="hidden md:flex items-center gap-2.5 shrink-0 mr-2 min-w-0">
           <div className="h-8 w-8 rounded-lg bg-indigo-50 text-indigo-500 flex items-center justify-center shrink-0">
             <FileText className="h-4 w-4" />
           </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-slate-900 leading-tight">Resume Editor</span>
+          <div className="flex flex-col min-w-0">
+            {titleEditing ? (
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={e => setTitleDraft(e.target.value)}
+                onFocus={e => e.currentTarget.select()}
+                onBlur={e => saveTitle(e.currentTarget.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                  if (e.key === 'Escape') setTitleEditing(false)
+                }}
+                maxLength={200}
+                className="text-sm font-semibold text-slate-900 leading-tight bg-white border border-indigo-300 rounded px-1 -mx-1 outline-none ring-2 ring-indigo-100 w-44"
+              />
+            ) : (
+              <button
+                onClick={() => { setTitleDraft(sessionTitle ?? DEFAULT_SESSION_TITLE); setTitleEditing(true) }}
+                className="group flex items-center gap-1.5 min-w-0 text-left"
+                title="Rename this resume"
+              >
+                <span className="text-sm font-semibold text-slate-900 leading-tight truncate max-w-[180px]">
+                  Editing: {sessionTitle ?? DEFAULT_SESSION_TITLE}
+                </span>
+                <Pencil className="h-3 w-3 text-slate-500 transition-colors shrink-0" />
+              </button>
+            )}
             <span className="text-[11px] text-slate-400 leading-tight flex items-center gap-1">
               {draftSaving ? 'Saving…' : draftSavedAt ? <span className="text-emerald-500 font-medium">Saved</span> : 'Edit content · pick layout · download PDF'}
             </span>
@@ -1254,30 +1332,75 @@ function EditorInner() {
         </div>
 
         {/* CENTER: preview canvas */}
-        <div className="flex-1 min-w-0 flex flex-col gap-4 lg:sticky lg:top-[88px] lg:h-[calc(100vh-104px)]">
-          <div className="w-full flex items-center justify-between shrink-0">
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 rounded-full px-3 py-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live Preview
-            </span>
-            {previewLoading && (
-              <span className="text-xs text-slate-400 flex items-center gap-1.5">
-                <Loader2 className="h-3 w-3 animate-spin" /> Updating…
+        <div className="flex-1 min-w-0 flex flex-col gap-3 lg:sticky lg:top-[88px] lg:h-[calc(100vh-104px)]">
+          <div className="w-full flex items-center justify-between shrink-0 px-0.5">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+              <span className="flex items-center gap-1 bg-emarald-400 px-2 py-1 rounded-full">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live preview_TODO
               </span>
-            )}
+              {previewLoading && (
+                <span className="flex items-center gap-1 text-slate-400">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Updating…
+                </span>
+              )}
+            </span>
+
+            {/* Zoom controls — mobile/tablet only; the toolbar's control
+                cluster (hidden lg:flex, up near Download) already covers
+                this on desktop, so showing both there would be a duplicate. */}
+            <div className="flex items-center gap-1.5 lg:hidden">
+              <button
+                onClick={zoomOut}
+                className="h-7 w-7 rounded-lg border border-slate-200 hover:border-slate-300 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors"
+                title="Zoom out"
+                aria-label="Zoom out"
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={resetZoomToFit}
+                className={cn(
+                  'h-7 px-2.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1',
+                  autoZoom
+                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700 font-semibold'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                )}
+                title={autoZoom ? 'Auto-fit to available width enabled' : 'Click to auto-fit to width'}
+              >
+                <span>{Math.round(zoom)}%</span>
+                {autoZoom && <span className="text-[10px] bg-indigo-200/60 px-1 rounded">Fit</span>}
+              </button>
+              <button
+                onClick={zoomIn}
+                className="h-7 w-7 rounded-lg border border-slate-200 hover:border-slate-300 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors"
+                title="Zoom in"
+                aria-label="Zoom in"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
+
           <div
             ref={previewCanvasRef}
-            className="scrollbar-thin flex-1 w-full overflow-y-auto overflow-x-hidden rounded-2xl bg-slate-100/60 p-4 lg:p-6 flex justify-center"
+            className="scrollbar-thin flex-1 w-full overflow-auto p-3 sm:p-4 lg:p-5"
           >
-            <div style={{ width: PREVIEW_BASE_WIDTH * zoom / 100, height: previewNaturalHeight * zoom / 100 }} className="shrink-0">
+            {/* mx-auto, not a flex justify-center parent — centered flex
+                content that overflows has a known browser quirk where you
+                can't scroll all the way back to the start edge. A block
+                element with auto margins degrades correctly: margins just
+                resolve to 0 once the content is wider than the container, so
+                zooming past 100% stays fully scrollable in both directions
+                instead of clipping the far side. */}
+            <div style={{ width: PREVIEW_BASE_WIDTH * zoom / 100, height: previewNaturalHeight * zoom / 100 }} className="shrink-0 mx-auto transition-all duration-150 ease-out">
               <div
-                className="bg-white overflow-hidden rounded-sm ring-1 ring-slate-900/5"
+                className="bg-white overflow-hidden rounded-sm"
                 style={{
                   width: PREVIEW_BASE_WIDTH,
                   height: previewNaturalHeight,
                   transform: `scale(${zoom / 100})`,
                   transformOrigin: 'top left',
-                  boxShadow: '0 1px 2px rgba(15,23,42,0.06), 0 12px 28px -8px rgba(15,23,42,0.16), 0 32px 64px -24px rgba(15,23,42,0.12)',
+                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 20px 40px -15px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04)',
                 }}
               >
                 {previewHtml ? (
@@ -1288,10 +1411,36 @@ function EditorInner() {
                     title="Resume live preview"
                     sandbox="allow-same-origin"
                     onLoad={() => {
-                      const doc = previewIframeRef.current?.contentDocument
+                      const iframe = previewIframeRef.current
+                      const doc = iframe?.contentDocument
                       if (!doc) return
-                      const natural = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0, PREVIEW_BASE_HEIGHT)
-                      setPreviewNaturalHeight(natural)
+
+                      try {
+                        const style = doc.createElement('style')
+                        style.textContent = 'html, body { overflow: hidden !important; margin: 0; }'
+                        doc.head.appendChild(style)
+                      } catch { /* silent */ }
+
+                      const calculateHeight = () => {
+                        const docEl = doc.documentElement
+                        const bodyEl = doc.body
+                        if (!docEl || !bodyEl) return
+                        const natural = Math.max(
+                          docEl.scrollHeight,
+                          docEl.offsetHeight,
+                          bodyEl.scrollHeight,
+                          bodyEl.offsetHeight,
+                          PREVIEW_BASE_HEIGHT
+                        )
+                        setPreviewNaturalHeight(natural + 6)
+                      }
+
+                      calculateHeight()
+                      if (doc.fonts) {
+                        doc.fonts.ready.then(calculateHeight).catch(() => { })
+                      }
+                      setTimeout(calculateHeight, 150)
+                      setTimeout(calculateHeight, 400)
                     }}
                   />
                 ) : (

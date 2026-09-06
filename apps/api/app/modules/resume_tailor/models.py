@@ -60,6 +60,7 @@ class TailoringSession(Base, UUIDPKMixin, CreatedAtMixin):
         # length convention, in case a future code path ever writes this
         # column without going through that endpoint.
         CheckConstraint("char_length(job_text) <= 20000", name="tailoring_sessions_job_text_length_check"),
+        CheckConstraint("title is null or char_length(title) <= 200", name="tailoring_sessions_title_length_check"),
         Index(
             "tailoring_sessions_user_resume_job_idx",
             "user_id", "resume_version_id", "job_hash",
@@ -90,6 +91,11 @@ class TailoringSession(Base, UUIDPKMixin, CreatedAtMixin):
     # Last template picked in the editor. Validated against rendering.TEMPLATE_REGISTRY
     # at the route layer, not a DB check — avoids a migration per template add/remove.
     template_id: Mapped[str | None] = mapped_column(nullable=True)
+    # User-chosen label for this session (e.g. "Primary Resume", "Google SWE
+    # v2") — lets one resume have many named tailoring sessions without them
+    # blurring together. NULL until the user renames it; the editor UI falls
+    # back to a generic display label in that case rather than storing one.
+    title: Mapped[str | None] = mapped_column(nullable=True)
     # User's in-progress editor edits, autosaved (debounced) from the editor
     # form. NULL until the user's first edit — GET /editor prefers this over
     # the freshly-computed base+tailoring overlay once it exists, so

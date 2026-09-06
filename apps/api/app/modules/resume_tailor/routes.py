@@ -7,14 +7,16 @@ editor visit) silently cross-contaminate. Every downstream endpoint
 (editor/preview/pdf) now addresses a specific {session_id} instead of
 guessing which resume/analysis "the current user" meant.
 
-Seven endpoints:
-    POST /tailor                        — analyze resume+JD, create/reuse a session
-    GET  /tailor/{id}                   — re-fetch an existing session's analysis
-    GET  /tailor/{id}/editor            — base_cv_data + tailoring overlay + templates
-    POST /tailor/{id}/preview           — render HTML for live preview (one template)
-    POST /tailor/{id}/preview/thumbnails — render HTML for every template at once (template-switcher rail)
-    POST /tailor/{id}/pdf               — render + return the final PDF
-    GET  /tailor/templates              — template registry metadata
+Endpoints:
+    POST  /tailor                        — analyze resume+JD, create/reuse a session
+    GET   /tailor/{id}                   — re-fetch an existing session's analysis
+    GET   /tailor/{id}/editor            — base_cv_data + tailoring overlay + templates
+    PATCH /tailor/{id}/draft             — debounced autosave of in-progress editor edits
+    PATCH /tailor/{id}/title             — rename the session (e.g. "Primary Resume")
+    POST  /tailor/{id}/preview           — render HTML for live preview (one template)
+    POST  /tailor/{id}/preview/thumbnails — render HTML for every template at once (template-switcher rail)
+    POST  /tailor/{id}/pdf               — render + return the final PDF
+    GET   /tailor/templates              — template registry metadata
 """
 
 from __future__ import annotations
@@ -54,6 +56,7 @@ from app.modules.resume_tailor.schemas import (
     TemplateListResponse,
     ThumbnailsRequest,
     ThumbnailsResponse,
+    TitleUpdateRequest,
 )
 from app.ai.embeddings import EmbeddingError, embed
 from app.ai.llm.provider import AIGenerationError
@@ -341,6 +344,7 @@ async def get_tailor_editor(session_id: str, request: Request, db: AsyncSession 
             "template_id": session.template_id or "standard",
             "templates": rendering.list_templates(),
             "is_draft": True,
+            "title": session.title,
         }
 
     resume_repo = ResumeVersionRepository(db)
@@ -381,6 +385,7 @@ async def get_tailor_editor(session_id: str, request: Request, db: AsyncSession 
         "template_id": template_id,
         "templates": rendering.list_templates(),
         "is_draft": False,
+        "title": session.title,
     }
 
 
@@ -410,6 +415,38 @@ async def save_tailor_draft(session_id: str, request: Request, body: DraftSaveRe
 
     await session_repo.save_draft(user_id, session_id, body.cv_data)
     return {"saved": True}
+
+
+# ── PATCH /tailor/{session_id}/title ──────────────────────────────
+
+@router.patch("/tailor/{session_id}/title")
+async def rename_tailor_session(session_id: str, request: Request, body: TitleUpdateRequest, db: AsyncSession = Depends(get_db)):
+    """User-chosen label for this session (e.g. "Primary Resume", "Google SWE
+    v2") — lets one resume have many named tailoring sessions without them
+    blurring together. Renaming is rare (not a per-keystroke autosave like
+    /draft), so it gets its own light burst budget rather than sharing one."""
+    user_id = await get_current_user_id(request, db)
+
+    session_repo = TailoringSessionRepository(db)
+    session = await session_repo.get(user_id, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    try:
+        burst_ok = await check_burst_limit(
+            user_id, "resume_tailor_title", settings.rate_limit_burst_limit, settings.rate_limit_burst_window_seconds,
+        )
+    except Exception:
+        burst_ok = True
+    if not burst_ok:
+        raise HTTPException(status_code=429, detail="Too many rename requests — please wait a few seconds and try again.")
+
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Title cannot be empty.")
+
+    await session_repo.set_title(user_id, session_id, title)
+    return {"title": title}
 
 
 # ── POST /tailor/{session_id}/preview ─────────────────────────────

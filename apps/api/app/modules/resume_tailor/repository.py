@@ -137,6 +137,9 @@ class TailoringSessionRepository(UserScopedRepository[TailoringSession]):
     async def set_template(self, user_id: str, id_: str, template_id: str) -> TailoringSession | None:
         return await self.update(user_id, id_, template_id=template_id)
 
+    async def set_title(self, user_id: str, id_: str, title: str) -> TailoringSession | None:
+        return await self.update(user_id, id_, title=title)
+
     async def save_draft(self, user_id: str, id_: str, draft_cv_data: dict[str, Any]) -> TailoringSession | None:
         """Autosaved editor edits. Overwrites any previous draft wholesale —
         the editor always sends its full current cv_data, not a diff."""
