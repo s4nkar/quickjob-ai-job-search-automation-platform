@@ -18,8 +18,14 @@ from __future__ import annotations
 # Bumping any of these forces a fresh cache key / fresh get_or_create_session
 # lookup — see cache.py and repository.py.
 MATCHER_VERSION = "matcher-v1"
-STRUCT_PROMPT_VERSION = "struct-v3"  # v3: switched to tier="light" (heavy/reasoning model was leaking chain-of-thought instead of JSON)
-PROSE_PROMPT_VERSION = "prose-v3"  # v3: switched to tier="light", same reasoning-leak issue
+# v3 switched these to tier="light" to dodge a reasoning model leaking
+# chain-of-thought instead of JSON — didn't fully fix it (the OpenRouter
+# fallback model leaked too, and the light model's own lower per-minute
+# token ceiling made rate-limit failures more likely, not less). v4 reverts
+# to tier="heavy" and adds response_format={"type": "json_object"} instead —
+# a structural JSON constraint at the API level, not a model choice bet.
+STRUCT_PROMPT_VERSION = "struct-v4"
+PROSE_PROMPT_VERSION = "prose-v4"
 
 
 JD_TRANSLATE_SYSTEM_PROMPT = (

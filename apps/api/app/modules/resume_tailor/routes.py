@@ -7,13 +7,14 @@ editor visit) silently cross-contaminate. Every downstream endpoint
 (editor/preview/pdf) now addresses a specific {session_id} instead of
 guessing which resume/analysis "the current user" meant.
 
-Six endpoints:
-    POST /tailor                    — analyze resume+JD, create/reuse a session
-    GET  /tailor/{id}               — re-fetch an existing session's analysis
-    GET  /tailor/{id}/editor        — base_cv_data + tailoring overlay + templates
-    POST /tailor/{id}/preview       — render HTML for live preview
-    POST /tailor/{id}/pdf           — render + return the final PDF
-    GET  /tailor/templates          — template registry metadata
+Seven endpoints:
+    POST /tailor                        — analyze resume+JD, create/reuse a session
+    GET  /tailor/{id}                   — re-fetch an existing session's analysis
+    GET  /tailor/{id}/editor            — base_cv_data + tailoring overlay + templates
+    POST /tailor/{id}/preview           — render HTML for live preview (one template)
+    POST /tailor/{id}/preview/thumbnails — render HTML for every template at once (template-switcher rail)
+    POST /tailor/{id}/pdf               — render + return the final PDF
+    GET  /tailor/templates              — template registry metadata
 """
 
 from __future__ import annotations
@@ -51,6 +52,8 @@ from app.modules.resume_tailor.schemas import (
     PreviewRequest,
     TailorResponse,
     TemplateListResponse,
+    ThumbnailsRequest,
+    ThumbnailsResponse,
 )
 from app.ai.embeddings import EmbeddingError, embed
 from app.ai.llm.provider import AIGenerationError
@@ -411,6 +414,29 @@ async def save_tailor_draft(session_id: str, request: Request, body: DraftSaveRe
 
 # ── POST /tailor/{session_id}/preview ─────────────────────────────
 
+async def _render_cv_template(template_id: str, cv_data: dict, user_id: str, db: AsyncSession) -> str:
+    """Shared by /preview and /preview/thumbnails. Callers must already have
+    run rendering.normalize_cv_data on cv_data — that step is template-
+    independent, so the batch endpoint runs it once rather than once per
+    template."""
+    data = dict(cv_data)
+    if template_id == "lebenslauf":
+        lebenslauf_cache_key = f"lebenslauf_profile:{user_id}"
+        cached_profile = await get_cached(lebenslauf_cache_key)
+        if cached_profile:
+            lp = json.loads(cached_profile)
+        else:
+            profile = await resume_tailor_service.get_profile_photo_fields(db, user_id)
+            lp = await rendering.fetch_lebenslauf_photo_fields(profile)
+            await set_cached(lebenslauf_cache_key, json.dumps(lp), ttl_seconds=3600)
+        data.update(lp)
+    else:
+        data.setdefault("photo_base64", None)
+        data.setdefault("date_of_birth", None)
+        data.setdefault("nationality", None)
+    return rendering.render_html(template_id, data)
+
+
 @router.post("/tailor/{session_id}/preview")
 async def preview_tailor_html(session_id: str, request: Request, body: PreviewRequest, db: AsyncSession = Depends(get_db)):
     """Render CV template to HTML for live preview — burst-limited only (cheap
@@ -438,24 +464,44 @@ async def preview_tailor_html(session_id: str, request: Request, body: PreviewRe
 
     cv_data = dict(body.cv_data)
     rendering.normalize_cv_data(cv_data)
-
-    if body.template_id == "lebenslauf":
-        lebenslauf_cache_key = f"lebenslauf_profile:{user_id}"
-        cached_profile = await get_cached(lebenslauf_cache_key)
-        if cached_profile:
-            lp = json.loads(cached_profile)
-        else:
-            profile = await resume_tailor_service.get_profile_photo_fields(db, user_id)
-            lp = await rendering.fetch_lebenslauf_photo_fields(profile)
-            await set_cached(lebenslauf_cache_key, json.dumps(lp), ttl_seconds=3600)
-        cv_data.update(lp)
-    else:
-        cv_data.setdefault("photo_base64", None)
-        cv_data.setdefault("date_of_birth", None)
-        cv_data.setdefault("nationality", None)
-
-    html_out = rendering.render_html(body.template_id, cv_data)
+    html_out = await _render_cv_template(body.template_id, cv_data, user_id, db)
     return HTMLResponse(content=html_out)
+
+
+# ── POST /tailor/{session_id}/preview/thumbnails ────────────────────
+
+@router.post("/tailor/{session_id}/preview/thumbnails", response_model=ThumbnailsResponse)
+async def preview_tailor_thumbnails(session_id: str, request: Request, body: ThumbnailsRequest, db: AsyncSession = Depends(get_db)):
+    """Render every registered template against the same cv_data in ONE call —
+    powers the editor's template-switcher rail, which shows a live thumbnail
+    per template using the user's actual resume content instead of a generic
+    placeholder. Deliberately batched server-side rather than having the
+    frontend fire one /preview request per template: that would be 17 calls
+    per debounce tick against a burst limit of 3/10s (rate_limit_burst_limit),
+    and would fail almost immediately."""
+    user_id = await get_current_user_id(request, db)
+
+    session = await TailoringSessionRepository(db).get(user_id, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    try:
+        burst_ok = await check_burst_limit(
+            user_id, "resume_tailor_thumbnails", settings.rate_limit_burst_limit, settings.rate_limit_burst_window_seconds,
+        )
+    except Exception:
+        burst_ok = True
+    if not burst_ok:
+        raise HTTPException(status_code=429, detail="Too many thumbnail requests — please wait a few seconds and try again.")
+
+    cv_data = dict(body.cv_data)
+    rendering.normalize_cv_data(cv_data)
+
+    thumbnails: dict[str, str] = {}
+    for template_id in rendering.TEMPLATE_REGISTRY:
+        thumbnails[template_id] = await _render_cv_template(template_id, cv_data, user_id, db)
+
+    return ThumbnailsResponse(thumbnails=thumbnails)
 
 
 # ── POST /tailor/{session_id}/pdf ─────────────────────────────────

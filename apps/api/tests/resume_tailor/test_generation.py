@@ -45,7 +45,7 @@ async def test_generate_tailor_prose_returns_bullet_patches_keyed_by_chunk_id(mo
         "summary": "Strong fit.",
     })
 
-    async def fake_generate_text_with_provider(prompt, system, max_tokens=1200, tier="heavy"):
+    async def fake_generate_text_with_provider(prompt, system, max_tokens=1200, tier="heavy", response_format=None):
         assert "[b0]" in prompt
         return llm_response, "groq"
 
@@ -68,7 +68,7 @@ async def test_generate_tailor_prose_returns_bullet_patches_keyed_by_chunk_id(mo
 async def test_generate_tailor_prose_degrades_on_ai_generation_error(monkeypatch):
     analysis = _match_result()
 
-    async def fake_generate_text_with_provider(prompt, system, max_tokens=1200, tier="heavy"):
+    async def fake_generate_text_with_provider(prompt, system, max_tokens=1200, tier="heavy", response_format=None):
         raise AIGenerationError("all providers exhausted")
 
     monkeypatch.setattr(generation.ai_provider, "generate_text_with_provider", fake_generate_text_with_provider)
@@ -84,7 +84,7 @@ async def test_generate_tailor_prose_degrades_on_ai_generation_error(monkeypatch
 async def test_generate_tailor_prose_handles_malformed_json_gracefully(monkeypatch):
     analysis = _match_result()
 
-    async def fake_generate_text_with_provider(prompt, system, max_tokens=1200, tier="heavy"):
+    async def fake_generate_text_with_provider(prompt, system, max_tokens=1200, tier="heavy", response_format=None):
         return "not json at all", "groq"
 
     monkeypatch.setattr(generation.ai_provider, "generate_text_with_provider", fake_generate_text_with_provider)
@@ -94,6 +94,62 @@ async def test_generate_tailor_prose_handles_malformed_json_gracefully(monkeypat
     )
     assert result.ai_status == "degraded"
     assert result.ai_provider == "groq"
+
+
+async def test_generate_base_cv_data_passes_through_well_formed_response(monkeypatch):
+    llm_response = json.dumps({
+        "full_name": "Jane Doe",
+        "job_title": "Backend Engineer",
+        "location": "Berlin, Germany",
+        "email": "jane@example.com",
+        "summary": "Backend engineer with 5 years of experience.",
+        "experience": [
+            {"title": "Engineer", "company": "Acme", "period": "2020-2024", "bullets": ["Built things"]},
+        ],
+        "skills": [{"category": "Languages", "items": "Python, Go"}],
+    })
+
+    async def fake_generate_text(prompt, system, max_tokens=4000, tier="heavy", response_format=None):
+        return llm_response
+
+    monkeypatch.setattr(generation.ai_provider, "generate_text", fake_generate_text)
+
+    result = await generation.generate_base_cv_data("Some resume text.")
+
+    assert result["full_name"] == "Jane Doe"
+    assert result["experience"] == [
+        {"title": "Engineer", "company": "Acme", "location": None, "period": "2020-2024", "bullets": ["Built things"]},
+    ]
+    assert result["skills"] == [{"category": "Languages", "items": "Python, Go"}]
+    # Fields the LLM omitted still come back with their schema defaults,
+    # never missing entirely.
+    assert result["projects"] == []
+    assert result["other_sections"] == []
+
+
+async def test_generate_base_cv_data_falls_back_per_field_on_malformed_shape(monkeypatch):
+    """response_format=json_object guarantees valid JSON syntax, not the right
+    shape — a model can still return e.g. skills as a string instead of a list
+    of objects. That single bad field should fall back to its default instead
+    of raising / corrupting the whole result."""
+    llm_response = json.dumps({
+        "full_name": "Jane Doe",
+        "skills": "Python, Go",  # wrong shape: should be a list of {category, items}
+        "experience": [{"title": "Engineer", "company": "Acme", "period": "2020-2024", "bullets": ["Built things"]}],
+    })
+
+    async def fake_generate_text(prompt, system, max_tokens=4000, tier="heavy", response_format=None):
+        return llm_response
+
+    monkeypatch.setattr(generation.ai_provider, "generate_text", fake_generate_text)
+
+    result = await generation.generate_base_cv_data("Some resume text.")
+
+    assert result["full_name"] == "Jane Doe"
+    assert result["skills"] == []  # malformed field falls back to default
+    assert result["experience"] == [
+        {"title": "Engineer", "company": "Acme", "location": None, "period": "2020-2024", "bullets": ["Built things"]},
+    ]  # well-formed sibling field is unaffected
 
 
 def test_generate_base_cv_data_prompt_excludes_tailoring_fields():

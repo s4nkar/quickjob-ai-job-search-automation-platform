@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^6.9.0",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^3.9.0",
     "@jobnok/ui": "workspace:*",
     "@radix-ui/react-popover": "^1.1.1",

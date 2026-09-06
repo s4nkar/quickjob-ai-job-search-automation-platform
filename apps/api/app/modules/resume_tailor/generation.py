@@ -36,6 +36,7 @@ from app.modules.resume_tailor.prompts import (
     STRUCT_SYSTEM_PROMPT,
     TAILOR_PROSE_SYSTEM_PROMPT,
 )
+from app.modules.resume_tailor.schemas import validate_cv_data
 from app.modules.resume_tailor.validation import validate_bullet_patch, validate_headline_skills, validate_summary
 
 if TYPE_CHECKING:
@@ -118,21 +119,31 @@ async def generate_base_cv_data(resume_text: str) -> dict[str, Any]:
 RESUME TEXT:
 {resume_text[:6000]}"""
 
-    # tier="light" — this call needs strict, clean JSON with nothing else in
-    # the output. The default "heavy" model is reasoning-capable and was
-    # observed leaking its chain-of-thought into the content field instead
-    # of emitting JSON (burning the whole max_tokens budget on prose like
-    # "We need to produce JSON with fields..." and never writing the actual
-    # answer) — this task doesn't need heavy-tier reasoning quality, and the
-    # light tier's non-reasoning model follows the strict-JSON instruction
-    # reliably instead.
-    raw = await ai_provider.generate_text(prompt, STRUCT_SYSTEM_PROMPT, max_tokens=4000, tier="light")
+    # response_format=json_object structurally constrains the output to valid
+    # JSON — a "return ONLY JSON" prompt instruction alone was observed NOT
+    # being reliably honored: switching this call to tier="light" to dodge a
+    # reasoning model's chain-of-thought leak didn't fix it either, since the
+    # OpenRouter fallback model (and, on retest, the light model's own
+    # provider) exhibited the same leak. JSON mode fixes it at the API level
+    # regardless of which model serves the request, so tier="heavy" is back —
+    # better quality and a materially higher per-minute token ceiling on Groq
+    # than the light model had.
+    raw = await ai_provider.generate_text(
+        prompt, STRUCT_SYSTEM_PROMPT, max_tokens=4000, tier="heavy",
+        response_format={"type": "json_object"},
+    )
     try:
         start = raw.find("{")
         end = raw.rfind("}") + 1
-        return json.loads(raw[start:end])
+        parsed = json.loads(raw[start:end])
     except Exception as exc:
         raise ValueError(f"Failed to structure resume: malformed LLM JSON response: {exc!r}") from exc
+
+    # response_format=json_object only guarantees valid JSON syntax, not the
+    # right shape — validate_cv_data checks it field-by-field against
+    # CvDataSchema and falls back per-field so one malformed field (e.g.
+    # "skills" returned as a string) doesn't take down the whole result.
+    return validate_cv_data(parsed)
 
 
 # ── Tailoring prose (JD-specific, cached per resume+job+prompt+model) ──
@@ -175,12 +186,12 @@ def _prose_model_label() -> str:
     actual goal.
 
     Must match the tier actually passed to generate_text_with_provider below
-    (tier="light") — this call needs strict JSON-only output, which the
-    heavy/reasoning-tier model doesn't reliably produce (see the call site's
-    comment), so the label reflects groq_light_model, not groq_model."""
+    (tier="heavy") — response_format=json_object handles JSON compliance now,
+    so this call no longer needs to dodge the heavy model via a tier switch
+    (see the call site's comment)."""
     provider = settings.ai_provider.lower().strip()
     if provider == "groq":
-        return f"groq:{settings.groq_light_model}"
+        return f"groq:{settings.groq_model}"
     if provider == "openrouter":
         return f"openrouter:{settings.openrouter_model}"
     return provider
@@ -257,11 +268,13 @@ RESUME (for extracting target_role/target_company and grounding prose only):
 {resume_text[:3500]}"""
 
     try:
-        # tier="light" — see generate_base_cv_data's comment: this call also
-        # needs strict JSON-only output, which the heavy reasoning model was
-        # observed not reliably producing.
+        # response_format=json_object — see generate_base_cv_data's comment.
+        # tier="heavy" for the same reason: JSON compliance is now enforced
+        # structurally, so there's no need to trade down to the light
+        # model's lower quality and lower per-minute token ceiling.
         raw, provider = await ai_provider.generate_text_with_provider(
-            prompt, TAILOR_PROSE_SYSTEM_PROMPT, max_tokens=1200, tier="light",
+            prompt, TAILOR_PROSE_SYSTEM_PROMPT, max_tokens=1200, tier="heavy",
+            response_format={"type": "json_object"},
         )
     except ai_provider.AIGenerationError as exc:
         logger.warning("Tailor prose generation failed: %r — returning deterministic analysis only", exc)
