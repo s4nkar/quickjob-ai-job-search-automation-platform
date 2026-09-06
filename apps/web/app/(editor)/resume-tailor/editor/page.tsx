@@ -791,7 +791,7 @@ function EditorInner() {
       <div className="flex-1 flex flex-col lg:flex-row gap-6 px-4 sm:px-6 lg:px-8 py-6 min-w-0">
 
         {/* LEFT: form */}
-        <div className="lg:w-[380px] xl:w-[420px] shrink-0 space-y-4 lg:sticky lg:top-[88px] lg:h-[calc(100vh-104px)] lg:overflow-y-auto lg:pr-2">
+        <div className="lg:w-[380px] xl:w-[420px] shrink-0 space-y-4 lg:sticky lg:top-[88px] lg:h-[calc(100vh-104px)] lg:overflow-y-auto lg:pr-2 scrollbar-thin">
 
           {/* Step tabs — vertical, draggable. Personal Info is pinned (not a
               printed section, doesn't participate in section_order); the

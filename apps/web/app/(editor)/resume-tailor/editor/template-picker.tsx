@@ -3,32 +3,7 @@
 import { TemplateId, TemplateMeta } from '@/lib/types'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, cn } from '@jobnok/ui'
 import { Lock } from 'lucide-react'
-import { PREVIEW_BASE_HEIGHT, PREVIEW_BASE_WIDTH } from './constants'
-
-// Mobile-only fallback surface (the desktop rail is the primary picker) — real
-// content thumbnails when available, generic placeholder shapes otherwise
-// (e.g. before the first thumbnails fetch resolves). Fixed pixel size (not
-// w-full) so the transform-scale math stays exact — matches the ~170px
-// column width the dialog's grid-cols-4/max-w-3xl produces in practice.
-const DIALOG_THUMB_WIDTH = 168
-const DIALOG_THUMB_SCALE = DIALOG_THUMB_WIDTH / PREVIEW_BASE_WIDTH
-const DIALOG_THUMB_HEIGHT = Math.round(PREVIEW_BASE_HEIGHT * DIALOG_THUMB_SCALE)
-
-function LiveThumb({ html, label }: { html: string; label: string }) {
-  return (
-    <div
-      className="rounded-lg border border-slate-200 bg-white overflow-hidden mx-auto"
-      style={{ width: DIALOG_THUMB_WIDTH, height: DIALOG_THUMB_HEIGHT }}
-    >
-      <div style={{
-        width: PREVIEW_BASE_WIDTH, height: PREVIEW_BASE_HEIGHT,
-        transform: `scale(${DIALOG_THUMB_SCALE})`, transformOrigin: 'top left',
-      }}>
-        <iframe srcDoc={html} className="w-full h-full border-0 pointer-events-none" sandbox="" title={label} tabIndex={-1} />
-      </div>
-    </div>
-  )
-}
+import { ScaledResumeThumb } from './scaled-thumb'
 
 // ── Template thumbnails ───────────────────────────────────────────
 // Small hand-drawn previews (no real render cost) standing in for each
@@ -137,7 +112,7 @@ export function TemplatePickerDialog({
         </DialogHeader>
 
         <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-2 mt-2">Single Column</p>
-        <div className="grid grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-5">
           {templates.filter(t => t.columns === 1).map(t => (
             <button
               key={t.id}
@@ -148,7 +123,9 @@ export function TemplatePickerDialog({
                 selectedTemplate === t.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
               )}
             >
-              {thumbnails?.[t.id] ? <LiveThumb html={thumbnails[t.id]} label={t.label} /> : TEMPLATE_THUMBS[t.id as TemplateId]}
+              {thumbnails?.[t.id]
+                ? <ScaledResumeThumb html={thumbnails[t.id]} label={t.label} className="rounded-lg border border-slate-200 bg-white" />
+                : TEMPLATE_THUMBS[t.id as TemplateId]}
               <p className="text-xs font-semibold text-slate-700 mt-2 leading-tight">{t.label}</p>
               <p className="text-[10px] text-slate-400 mt-0.5 truncate">{t.font.split(',')[0]}</p>
             </button>
@@ -156,7 +133,7 @@ export function TemplatePickerDialog({
         </div>
 
         <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-2">Two Column</p>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {templates.filter(t => t.columns === 2).map(t => {
             const locked = t.id === 'lebenslauf' && !profileOkForLebenslauf
             return (
@@ -170,7 +147,9 @@ export function TemplatePickerDialog({
                   locked && 'opacity-60'
                 )}
               >
-                {thumbnails?.[t.id] ? <LiveThumb html={thumbnails[t.id]} label={t.label} /> : TEMPLATE_THUMBS[t.id as TemplateId]}
+                {thumbnails?.[t.id]
+                  ? <ScaledResumeThumb html={thumbnails[t.id]} label={t.label} className="rounded-lg border border-slate-200 bg-white" />
+                  : TEMPLATE_THUMBS[t.id as TemplateId]}
                 <p className="text-xs font-semibold text-slate-700 mt-2 leading-tight">{t.label}</p>
                 <p className="text-[10px] text-slate-400 mt-0.5 truncate">{t.font.split(',')[0]}</p>
                 {locked && (

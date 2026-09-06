@@ -3,13 +3,8 @@
 import { TemplateId, TemplateMeta } from '@/lib/types'
 import { cn } from '@jobnok/ui'
 import { Check, ChevronLeft, ChevronRight, Lock } from 'lucide-react'
-import { PREVIEW_BASE_HEIGHT, PREVIEW_BASE_WIDTH } from './constants'
+import { ScaledResumeThumb } from './scaled-thumb'
 
-// Real-content thumbnail width — the rest (rail width, card padding) is
-// derived from this. Height follows the A4 aspect ratio automatically.
-const THUMB_WIDTH = 148
-const THUMB_SCALE = THUMB_WIDTH / PREVIEW_BASE_WIDTH
-const THUMB_HEIGHT = Math.round(PREVIEW_BASE_HEIGHT * THUMB_SCALE)
 const RAIL_WIDTH = 192
 
 function RailCard({
@@ -31,27 +26,7 @@ function RailCard({
         locked && 'opacity-60'
       )}
     >
-      <div
-        className="rounded-md overflow-hidden border border-slate-200 bg-white mx-auto relative"
-        style={{ width: THUMB_WIDTH, height: THUMB_HEIGHT }}
-      >
-        {html ? (
-          <div style={{
-            width: PREVIEW_BASE_WIDTH, height: PREVIEW_BASE_HEIGHT,
-            transform: `scale(${THUMB_SCALE})`, transformOrigin: 'top left',
-          }}>
-            <iframe
-              srcDoc={html}
-              className="w-full h-full border-0 pointer-events-none"
-              sandbox=""
-              title={template.label}
-              tabIndex={-1}
-            />
-          </div>
-        ) : (
-          <div className="w-full h-full animate-pulse bg-slate-100" />
-        )}
-      </div>
+      <ScaledResumeThumb html={html} label={template.label} className="rounded-md border border-slate-200 bg-white" />
       <p className="text-[11px] font-semibold text-slate-700 mt-1.5 leading-tight truncate">{template.label}</p>
 
       {selected && (
@@ -85,7 +60,7 @@ export function TemplateRail({
   const twoCol = templates.filter(t => t.columns === 2)
 
   return (
-    <div className="hidden lg:block shrink-0 relative">
+    <div className="hidden lg:block shrink-0 relative scrollbar-thin">
       <button
         onClick={onToggleCollapsed}
         className="absolute -left-3 top-6 z-10 h-7 w-7 rounded-full bg-white border border-slate-200 shadow-card flex items-center justify-center text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-colors"
