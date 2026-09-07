@@ -9,6 +9,9 @@ apps/*/.next/
 apps/*/out/
 apps/*/build/
 
+# Vendored at install time (postinstall) from node_modules — not source
+apps/web/public/vendor/
+
 # Python
 apps/api/__pycache__/
 apps/api/**/__pycache__/

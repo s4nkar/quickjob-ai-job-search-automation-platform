@@ -8,6 +8,15 @@ packages:
 # — dev-only tooling, needs its native binary built. @clerk/shared's
 # postinstall only writes a one-time telemetry-notice file to the user's
 # config dir and prints a console message — verified, no network calls.
+# core-js/es5-ext came in transitively via pagedjs's own dependency tree
+# (@babel/polyfill -> core-js, event-emitter -> es5-ext) — denied, not
+# approved: we only ever consume pagedjs's pre-built dist/paged.esm.js
+# bundle (vendored by apps/web/scripts/copy-pagedjs.mjs), never pagedjs's
+# raw source, so these two packages' own install scripts (core-js's is a
+# sponsorship-message print; es5-ext's is an environment self-check) are
+# not needed for anything we actually use.
 allowBuilds:
   '@clerk/shared': true
+  core-js: false
+  es5-ext: false
   unrs-resolver: true
