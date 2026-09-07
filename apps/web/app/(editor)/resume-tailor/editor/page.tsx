@@ -11,7 +11,7 @@ import { Button, Input, Textarea, Label, useToast, cn } from '@jobnok/ui'
 import {
   ArrowLeft, Download, Loader2, Plus, Minus, Trash2, ChevronDown,
   FileText, Briefcase, GraduationCap, Wrench, FolderOpen, BookOpen,
-  Languages, AlertTriangle, Star, Eye, EyeOff, Layers, RotateCcw,
+  Languages, AlertTriangle, Star, Eye, Layers, RotateCcw,
   LayoutTemplate, User, GripVertical, Pencil,
 } from 'lucide-react'
 import {
@@ -20,6 +20,7 @@ import {
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { TemplatePickerDialog } from './template-picker'
+import { CompareDialog } from './compare-dialog'
 import { TemplateRail } from './template-rail'
 import { PREVIEW_BASE_HEIGHT, PREVIEW_BASE_WIDTH, ZOOM_LEVELS } from './constants'
 
@@ -310,7 +311,7 @@ function EditorInner() {
   const { toast } = useToast()
 
   const [originalPdfUrl, setOriginalPdfUrl] = useState<string | null>(null)
-  const [showOriginalPdf, setShowOriginalPdf] = useState(false)
+  const [compareOpen, setCompareOpen] = useState(false)
   const [cvData, setCvData] = useState<CvData | null>(null)
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [titleEditing, setTitleEditing] = useState(false)
@@ -1038,14 +1039,11 @@ function EditorInner() {
         {/* Compare to original — mobile/tablet only; folded into the control cluster on desktop */}
         {originalPdfUrl && (
           <button
-            onClick={() => setShowOriginalPdf(v => !v)}
-            title={showOriginalPdf ? 'Hide original PDF' : 'Compare to original PDF'}
-            className={cn(
-              'lg:hidden h-9 w-9 flex items-center justify-center rounded-lg border transition-colors shrink-0',
-              showOriginalPdf ? 'border-indigo-200 bg-indigo-50 text-indigo-600' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-            )}
+            onClick={() => setCompareOpen(true)}
+            title="Compare with original"
+            className="lg:hidden h-9 w-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
           >
-            {showOriginalPdf ? <EyeOff className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+            <FileText className="h-4 w-4" />
           </button>
         )}
 
@@ -1084,14 +1082,11 @@ function EditorInner() {
             <>
               <div className="h-5 w-px bg-slate-200 mx-0.5" />
               <button
-                onClick={() => setShowOriginalPdf(v => !v)}
-                title={showOriginalPdf ? 'Hide original PDF' : 'Compare to original PDF'}
-                className={cn(
-                  'h-7 w-7 flex items-center justify-center rounded-lg transition-all',
-                  showOriginalPdf ? 'bg-indigo-500 text-white shadow-sm' : 'text-slate-500 hover:bg-white hover:shadow-sm'
-                )}
+                onClick={() => setCompareOpen(true)}
+                title="Compare with original"
+                className="h-7 w-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:shadow-sm transition-all"
               >
-                {showOriginalPdf ? <EyeOff className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
+                <FileText className="h-3.5 w-3.5" />
               </button>
             </>
           )}
@@ -1689,21 +1684,6 @@ function EditorInner() {
             </div>
           </div>
 
-          {/* Original PDF (collapsible reference) */}
-          {originalPdfUrl && showOriginalPdf && (
-            <div className="w-full bg-white rounded-2xl border border-slate-100 shadow-card overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center gap-2">
-                <FileText className="h-4 w-4 text-slate-400" />
-                <span className="text-xs font-semibold text-slate-600">Original Resume (reference)</span>
-              </div>
-              <iframe
-                src={originalPdfUrl}
-                className="w-full"
-                style={{ height: '360px' }}
-                title="Original resume PDF"
-              />
-            </div>
-          )}
         </div>
 
         {/* RIGHT: layouts rail (desktop only — mobile uses the toolbar's dialog) */}
@@ -1727,6 +1707,14 @@ function EditorInner() {
         onSelect={selectTemplate}
         profileOkForLebenslauf={profileOkForLebenslauf}
         thumbnails={thumbnails}
+      />
+
+      <CompareDialog
+        open={compareOpen}
+        onOpenChange={setCompareOpen}
+        originalPdfUrl={originalPdfUrl}
+        newHtml={activeSlot === 'a' ? slotAHtml : slotBHtml}
+        newHeight={previewNaturalHeight}
       />
     </div>
   )
