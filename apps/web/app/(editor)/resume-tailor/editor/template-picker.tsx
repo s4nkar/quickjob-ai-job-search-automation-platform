@@ -139,7 +139,13 @@ export function TemplatePickerDialog({
             return (
               <button
                 key={t.id}
-                onClick={() => { if (!locked) { onSelect(t.id as TemplateId); onOpenChange(false) } }}
+                // Always calls onSelect (and closes), even when locked -
+                // selectTemplate (page.tsx) already has a guard that shows a
+                // toast explaining what's missing. Swallowing the click here
+                // instead meant clicking a locked template did nothing at
+                // all, with the only explanation hidden behind a hover
+                // tooltip nobody would find (and unreachable on touch).
+                onClick={() => { onSelect(t.id as TemplateId); onOpenChange(false) }}
                 title={locked ? 'Requires profile photo, phone and city' : t.desc}
                 className={cn(
                   'text-left rounded-xl border-2 p-2.5 transition-all relative',

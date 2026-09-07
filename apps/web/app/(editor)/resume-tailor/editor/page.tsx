@@ -1036,61 +1036,61 @@ function EditorInner() {
           <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
         </button>
 
-        {/* Compare to original — mobile/tablet only; folded into the control cluster on desktop */}
+        {/* Compare to original — mobile/tablet only; a standalone labeled
+            button on desktop (below) replaces this at lg: */}
         {originalPdfUrl && (
           <button
             onClick={() => setCompareOpen(true)}
-            title="Compare with original"
-            className="lg:hidden h-9 w-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            className="lg:hidden flex items-center gap-2 h-9 px-3 rounded-lg border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-colors shrink-0"
           >
-            <FileText className="h-4 w-4" />
+            <FileText className="h-4 w-4 text-slate-400" />
+            <span className="text-xs font-semibold text-slate-700 hidden sm:inline">Compare</span>
           </button>
         )}
 
-        {/* Control cluster: zoom + compare-original, grouped (desktop only) */}
-        <div className="hidden lg:flex items-center gap-0.5 bg-slate-100/80 rounded-xl p-1 shrink-0">
-          <div className="flex items-center gap-1 px-0.5">
-            <button
-              onClick={zoomOut}
-              disabled={zoom <= ZOOM_LEVELS[0]}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:shadow-sm disabled:opacity-30 transition-all"
-              aria-label="Zoom out"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={resetZoomToFit}
-              title={autoZoom ? 'Fitted to width' : 'Reset to fit width'}
-              className={cn(
-                'text-xs font-semibold w-10 text-center tabular-nums rounded-md py-0.5 transition-colors',
-                autoZoom ? 'text-indigo-600' : 'text-slate-600 hover:bg-white'
-              )}
-            >
-              {Math.round(zoom)}%
-            </button>
-            <button
-              onClick={zoomIn}
-              disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:shadow-sm disabled:opacity-30 transition-all"
-              aria-label="Zoom in"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          {originalPdfUrl && (
-            <>
-              <div className="h-5 w-px bg-slate-200 mx-0.5" />
-              <button
-                onClick={() => setCompareOpen(true)}
-                title="Compare with original"
-                className="h-7 w-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:shadow-sm transition-all"
-              >
-                <FileText className="h-3.5 w-3.5" />
-              </button>
-            </>
-          )}
+        {/* Zoom cluster (desktop only) */}
+        <div className="hidden lg:flex items-center gap-1 bg-slate-100/80 rounded-xl p-1 shrink-0">
+          <button
+            onClick={zoomOut}
+            disabled={zoom <= ZOOM_LEVELS[0]}
+            className="h-7 w-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:shadow-sm disabled:opacity-30 transition-all"
+            aria-label="Zoom out"
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={resetZoomToFit}
+            title={autoZoom ? 'Fitted to width' : 'Reset to fit width'}
+            className={cn(
+              'text-xs font-semibold w-10 text-center tabular-nums rounded-md py-0.5 transition-colors',
+              autoZoom ? 'text-indigo-600' : 'text-slate-600 hover:bg-white'
+            )}
+          >
+            {Math.round(zoom)}%
+          </button>
+          <button
+            onClick={zoomIn}
+            disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
+            className="h-7 w-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:shadow-sm disabled:opacity-30 transition-all"
+            aria-label="Zoom in"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
         </div>
+
+        {/* Compare to original — standalone, labeled (desktop only). Was
+            previously an icon-only button squeezed into the zoom cluster,
+            which nobody could tell did anything without hovering for the
+            title tooltip; a visible label needed its own room to breathe
+            rather than being crammed next to the zoom buttons. */}
+        {originalPdfUrl && (
+          <button
+            onClick={() => setCompareOpen(true)}
+            className="hidden lg:flex items-center gap-1.5 h-9 px-3 rounded-lg border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-colors shrink-0 text-xs font-semibold text-slate-600"
+          >
+            <FileText className="h-3.5 w-3.5 text-slate-400" /> Compare
+          </button>
+        )}
 
         <Button
           onClick={handleDownload}

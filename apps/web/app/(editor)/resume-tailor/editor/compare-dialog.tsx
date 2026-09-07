@@ -75,9 +75,24 @@ export function CompareDialog({ open, onOpenChange, originalPdfUrl, newHtml, new
               <FileText className="h-3.5 w-3.5 text-slate-400" />
               <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Original</span>
             </div>
-            <div className="flex-1 min-h-0 bg-slate-100">
+            {/* Same bg + padding as the tailored pane below, so the original
+                reads as a floating page card too instead of a PDF viewer
+                jammed edge-to-edge against the pane's borders. */}
+            <div className="flex-1 min-h-0 bg-[#f8f8fc] p-4">
               {originalPdfUrl ? (
-                <iframe src={originalPdfUrl} className="w-full h-full border-0" title="Original resume" />
+                // #toolbar=0&navpanes=0 are the PDF-embed viewer's own open
+                // params (supported by Chrome/Edge's built-in PDF.js viewer,
+                // which is what actually renders a plain <iframe src="*.pdf">)
+                // - without them the browser's own toolbar (zoom, print,
+                // download, page-nav sidebar) shows up on top of the PDF,
+                // which is what looked like an unrelated "editor" chrome
+                // next to the plain, chrome-free resume preview on the right.
+                <iframe
+                  src={`${originalPdfUrl}#toolbar=0&navpanes=0`}
+                  className="w-full h-full border-0 rounded-sm bg-white"
+                  style={{ boxShadow: '0 1px 3px rgba(15,23,42,0.08)' }}
+                  title="Original resume"
+                />
               ) : (
                 <div className="flex items-center justify-center h-full text-sm text-slate-400">No original on file</div>
               )}

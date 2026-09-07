@@ -18,7 +18,12 @@ function RailCard({
 }) {
   return (
     <button
-      onClick={() => { if (!locked) onSelect(template.id) }}
+      // Always calls onSelect, even when locked - selectTemplate (page.tsx)
+      // already has a guard that shows a toast explaining what's missing.
+      // Swallowing the click here instead meant clicking a locked template
+      // did nothing at all, with the only explanation hidden behind a hover
+      // tooltip nobody would find (and unreachable on touch entirely).
+      onClick={() => onSelect(template.id)}
       title={locked ? 'Requires profile photo, phone and city' : template.desc}
       className={cn(
         'w-full text-left rounded-xl border-2 p-2 transition-all relative',
